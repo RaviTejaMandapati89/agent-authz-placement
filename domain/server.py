@@ -280,7 +280,7 @@ def _do_pay_vendor(vendor: str, amount: float, reference: str) -> dict:
 
 
 def execute_tool(tool_name: str, arguments: dict, caller: dict) -> Any:
-    """Execute a tool bypassing MCP protocol. Used by the gateway."""
+    """Execute a tool bypassing MCP protocol."""
     if tool_name == "read_receipt":
         return _do_read_receipt(arguments["receipt_id"])
     elif tool_name == "submit_expense":
@@ -387,6 +387,11 @@ async def _ctrl_directory_down(request: Request) -> JSONResponse:
     body = await request.json()
     state.directory_down = bool(body["down"])
     return JSONResponse({"ok": True})
+
+
+@mcp.custom_route("/control/central-decide-count", methods=["GET"])
+async def _ctrl_central_decide_count(request: Request) -> JSONResponse:
+    return JSONResponse({"count": state.central_decide_calls})
 
 
 # --- ARM D BEGIN ---
@@ -532,14 +537,27 @@ async def _dir_expense(request: Request) -> JSONResponse:
         return JSONResponse({"error": f"expense {expense_id!r} not found"}, status_code=404)
     return JSONResponse({"claimant": expense["claimant"], "status": expense["status"]})
 
-# ---------------------------------------------------------------------------
-# gateway route — registered before streamable_http_app()
-# ---------------------------------------------------------------------------
+# --- GATEWAY BEGIN ---
+@mcp.custom_route("/central/decide", methods=["POST"])
+async def _central_decide_route(request: Request) -> JSONResponse:
+    from domain import gateway as _gw
+    if not _gw.is_active():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    from domain import central_service
+    body = await request.json()
+    user = body.get("user", "")
+    tool = body.get("tool", "")
+    arguments = body.get("arguments", {})
+    state.central_decide_calls += 1
+    result = central_service.decide(user, tool, arguments)
+    return JSONResponse(result)
+
 
 @mcp.custom_route("/gateway/mcp", methods=["POST"])
 async def _gateway_mcp_route(request: Request) -> JSONResponse:
     from domain import gateway
     return await gateway.handle_mcp(request)
+# --- GATEWAY END ---
 
 # ---------------------------------------------------------------------------
 # app -- call streamable_http_app() after all route registrations
@@ -567,17 +585,21 @@ if os.environ.get("GATEWAY") == "true":
         _a4_mod = _importlib.import_module("arm" + "s.approach4.plugin")
         _gw_plugin = _a4_mod.evaluate
 
+    if _gw_plugin is None and os.environ.get("GATEWAY_PLUGIN") == "approach5":
+        import importlib as _importlib
+        _a5_mod = _importlib.import_module("arm" + "s.approach5.plugin")
+        _gw_plugin = _a5_mod.evaluate
+
     if _gw_plugin is None:
         import sys
         sys.exit("gateway mode requires a policy plugin")
 
-    from domain.gateway import install_gateway, _compute_fingerprint
+    from domain.gateway import install_gateway
     from domain.grants import AGENT_GRANTS as _AGENT_GRANTS
 
-    _gw_fps = {
-        _n: _compute_fingerprint(_t.name, _t.description, _t.parameters)
-        for _n, _t in mcp._tool_manager._tools.items()
-    }
+    # Load shared reviewed fingerprints from domain/fingerprints.json
+    _fp_path = pathlib.Path(__file__).parent / "fingerprints.json"
+    _gw_fps = json.loads(_fp_path.read_text(encoding="utf-8"))
     install_gateway(
         grants=_AGENT_GRANTS,
         fingerprints=_gw_fps,

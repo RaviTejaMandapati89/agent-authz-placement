@@ -31,6 +31,21 @@ _ARM_D_MARKER_RE = re.compile(
     re.DOTALL,
 )
 
+_GATEWAY_MARKER_RE = re.compile(
+    r"[ \t]*# --- GATEWAY BEGIN ---.*?# --- GATEWAY END ---\n?",
+    re.DOTALL,
+)
+
+_DOMAIN_ALLOW = frozenset({
+    "__init__.py",
+    "fixtures.py",
+    "identity.py",
+    "server.py",
+    "simclock.py",
+    "state.py",
+    "tokens.py",
+})
+
 _PYPROJECT = """\
 [project]
 name = "gvg-arm-b-gen"
@@ -60,6 +75,10 @@ def _strip_arm_d(text: str) -> str:
     return _ARM_D_MARKER_RE.sub("", text)
 
 
+def _strip_gateway(text: str) -> str:
+    return _GATEWAY_MARKER_RE.sub("", text)
+
+
 def _check_forbidden(kit_root: pathlib.Path) -> list[str]:
     hits: list[str] = []
     for path in sorted(kit_root.rglob("*")):
@@ -79,8 +98,10 @@ def _check_forbidden(kit_root: pathlib.Path) -> list[str]:
 def _copy_domain(src: pathlib.Path, dst: pathlib.Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     for py in sorted(src.glob("*.py")):
+        if py.name not in _DOMAIN_ALLOW:
+            continue
         text = py.read_text(encoding="utf-8")
-        stripped = _strip_arm_d(text)
+        stripped = _strip_gateway(_strip_arm_d(text))
         (dst / py.name).write_text(stripped, encoding="utf-8")
 
 

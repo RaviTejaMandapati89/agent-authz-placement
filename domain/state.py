@@ -23,6 +23,7 @@ class State:
         self.expense_limit: int = EXPENSE_LIMIT
         self.directory_down: bool = False
         self.pdp_down: bool = False
+        self.central_decide_calls: int = 0
         self.run_id: str | None = None
         self.scenario: str | None = None
         self.arm: str | None = None

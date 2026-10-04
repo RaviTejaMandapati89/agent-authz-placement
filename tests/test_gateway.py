@@ -274,6 +274,15 @@ async def test_gateway_mode_starts_with_plugin(running_app):
     remove_gateway()
 
 
+async def test_central_decide_absent_in_non_gateway_mode(http_client):
+    """In non-gateway mode /central/decide is not installed and returns 404."""
+    resp = await http_client.post(
+        "/central/decide",
+        json={"user": "alice", "tool": "read_receipt", "arguments": {}},
+    )
+    assert resp.status_code == 404
+
+
 def test_gateway_mode_startup_fails_without_plugin(tmp_path):
     """Starting the server in gateway mode through the runner's own start
     path (runner._server.domain_server), with no policy plugin plugged in,

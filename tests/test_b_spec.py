@@ -95,6 +95,95 @@ def test_forbidden_word_check_all_words(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# make_kit: allow list and gateway stripping
+# ---------------------------------------------------------------------------
+
+def test_kit_domain_excludes_gateway_and_policy_files(tmp_path):
+    """Kit domain/ contains none of the gateway-side or policy files."""
+    from arms.b_spec.make_kit import build_kit
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+
+    for rel in (
+        "domain/gateway.py",
+        "domain/grants.py",
+        "domain/central_service.py",
+        "domain/central_policy.cedar",
+        "domain/fingerprints.json",
+    ):
+        assert not (kit / rel).exists(), f"{rel} must not appear in the kit"
+
+
+def test_kit_server_py_contains_no_gateway_references(tmp_path):
+    """Kit domain/server.py contains none of the gateway-side strings."""
+    from arms.b_spec.make_kit import build_kit
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+
+    text = (kit / "domain" / "server.py").read_text(encoding="utf-8")
+    for needle in ("/central/decide", "central_service", "grants", "gateway"):
+        assert needle not in text, (
+            f"kit/domain/server.py must not contain {needle!r}"
+        )
+
+
+def test_kit_server_non_gateway_mode_serves_mcp(tmp_path):
+    """Kit server.py starts in non-gateway mode and responds 200 to /mcp."""
+    import subprocess
+    import sys
+    from arms.b_spec.make_kit import build_kit
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+
+    script = f"""
+import sys
+sys.path.insert(0, {str(kit)!r})
+import asyncio, httpx
+from domain.server import app, mcp
+
+async def main():
+    async with mcp._session_manager.run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://localhost:8765",
+            headers={{"Host": "localhost:8765"}},
+        ) as client:
+            resp = await client.post(
+                "/mcp",
+                json={{
+                    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {{
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {{}},
+                        "clientInfo": {{"name": "test", "version": "0"}},
+                    }},
+                }},
+                headers={{
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "MCP-Protocol-Version": "2025-11-25",
+                }},
+            )
+            assert resp.status_code == 200, f"status={{resp.status_code}}"
+            print("OK")
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"Kit server failed in non-gateway mode.\n"
+        f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    )
+    assert "OK" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # import_gen: manifest matches file hashes; detects a changed file
 # ---------------------------------------------------------------------------
 

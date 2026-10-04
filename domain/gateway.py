@@ -7,6 +7,7 @@ then delegates tool execution to the server.
 """
 import datetime
 import hashlib
+import inspect
 import json
 import uuid
 from typing import Any, Callable
@@ -134,6 +135,8 @@ def _gw_decision_line(
         "decision": decision["decision"],
         "rule": decision["rule"],
         "reason": decision["reason"],
+        "central_called": decision.get("central_called", False),
+        "central_duration_ms": decision.get("central_duration_ms", 0),
     })
 
 
@@ -154,7 +157,7 @@ def _gw_outcome_line(
 # Check pipeline: IDENTITY → GRANT → P6 → SCOPE → policy plugin
 # ---------------------------------------------------------------------------
 
-def _check_pipeline(
+async def _check_pipeline(
     auth_header: str | None, tool_name: str, arguments: dict,
 ) -> tuple[dict, dict, str]:
     """Returns (caller, decision, call_id)."""
@@ -236,13 +239,15 @@ def _check_pipeline(
         }
         return caller, decision, call_id
 
-    # 5. Policy plugin
+    # 5. Policy plugin (supports both sync and async plugins)
     agent_chain = caller.get("agent")
     if isinstance(agent_chain, str):
         agent_chain = [agent_chain]
 
     try:
         result = _policy_plugin(claims, agent_chain, tool_name, arguments)
+        if inspect.iscoroutine(result):
+            result = await result
     except Exception as exc:
         decision = {"decision": "error", "rule": None, "reason": str(exc)}
         return caller, decision, call_id
@@ -251,6 +256,8 @@ def _check_pipeline(
         "decision": result["decision"],
         "rule": result.get("rule"),
         "reason": result.get("reason", ""),
+        "central_called": result.get("central_called", False),
+        "central_duration_ms": result.get("central_duration_ms", 0),
     }
     return caller, decision, call_id
 
@@ -342,7 +349,7 @@ async def handle_mcp(request: Request) -> JSONResponse:
         arguments = params.get("arguments", {})
         auth = request.headers.get("authorization")
 
-        caller, decision, call_id = _check_pipeline(auth, tool_name, arguments)
+        caller, decision, call_id = await _check_pipeline(auth, tool_name, arguments)
         _gw_decision_line(call_id, caller, tool_name, arguments, decision)
 
         if decision["decision"] in ("deny", "error"):
