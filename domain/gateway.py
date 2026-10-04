@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from domain import simclock, tokens
+from domain.scopes import TOOL_SCOPE_MAP
 
 # ---------------------------------------------------------------------------
 # Module state
@@ -42,7 +43,7 @@ def install_gateway(
     *,
     grants: dict[str, list[str]],
     fingerprints: dict[str, str],
-    scope_map: dict[str, str],
+    scope_map: dict[str, str] | None = None,
     policy_plugin: Callable | None,
 ) -> None:
     global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise, _skip_token_expiry
@@ -56,7 +57,7 @@ def install_gateway(
 
     _grants = dict(grants)
     _fingerprints = dict(fingerprints)
-    _scope_map = dict(scope_map)
+    _scope_map = dict(scope_map) if scope_map is not None else dict(TOOL_SCOPE_MAP)
     _policy_plugin = policy_plugin
     _skip_token_expiry = getattr(policy_plugin, "skip_token_expiry", False)
     _active = True

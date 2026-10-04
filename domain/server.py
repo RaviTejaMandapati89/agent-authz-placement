@@ -663,13 +663,6 @@ if os.environ.get("GATEWAY") == "true":
     install_gateway(
         grants=_AGENT_GRANTS,
         fingerprints=_gw_fps,
-        scope_map={
-            "read_receipt": "expenses:read",
-            "submit_expense": "expenses:submit",
-            "approve_expense": "expenses:approve",
-            "book_travel": "travel:book",
-            "pay_vendor": "payments:pay",
-        },
         policy_plugin=_gw_plugin,
     )
 # --- GATEWAY END ---

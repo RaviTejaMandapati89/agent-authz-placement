@@ -47,6 +47,7 @@ def run(
     run_id: str | None = None,
     between_turns_fn=None,
     bearer_token: str = "",
+    config_dir: pathlib.Path | None = None,
 ) -> tuple[str, dict, list[dict]]:
     """Run a multi-turn conversation and return (final_reply, usage, turns_data)."""
     model = BedrockModel(
@@ -73,6 +74,8 @@ def run(
         base_url=base_url,
         run_id=run_id,
         limit_override=limit_override,
+        config_dir=config_dir,
+        bearer_token=bearer_token,
     )
 
     final_reply = ""

@@ -580,12 +580,14 @@ async def test_gateway_grant_independent_of_agent_config(
     mock_http = MagicMock()
     mock_http.get.return_value = vendor_resp
 
+    from tests.test_hook import _full_scope_bearer
     hook = PolicyHook(
         agent_name="expense-assistant",
         user="alice",
         base_url="http://localhost:8765",
         config_dir=agent_cfg_dir,
         http_client=mock_http,
+        bearer_token=_full_scope_bearer("expense-assistant", "alice"),
     )
     decision, rule, reason = hook._evaluate(
         "pay_vendor",

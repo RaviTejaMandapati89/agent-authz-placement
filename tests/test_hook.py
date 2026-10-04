@@ -20,6 +20,7 @@ import yaml
 
 import arms.c_hook.agent as arm_c
 from arms.c_hook.hook import PolicyHook, _load_config, fingerprint
+from domain import tokens
 from strands.hooks.events import BeforeToolCallEvent
 
 
@@ -96,13 +97,32 @@ def _make_client(responses: dict) -> httpx.Client:
     return client
 
 
+def _full_scope_bearer(agent_name: str, user: str) -> str:
+    """Issue a real on-behalf-of token with the full set of scopes.
+
+    Used as the default bearer_token in _hook so that the SCOPE check (added
+    in task 4) passes for all pre-existing tests that are not testing scope.
+    """
+    all_scopes = sorted(tokens.FIXED_SCOPES)
+    user_tok = tokens.issue_user_token(
+        sub=user, aud=agent_name, scope=all_scopes, lifetime=3600,
+    )
+    agent_tok = tokens.issue_agent_token(
+        sub=agent_name, aud=tokens.SERVER_AUDIENCE, scope=all_scopes, lifetime=3600,
+    )
+    return tokens.exchange(user_tok, agent_tok)
+
+
 def _hook(
     agent_name: str,
     user: str,
     dir_responses: dict,
     limit_override: int | None = None,
     config_dir: pathlib.Path | None = None,
+    bearer_token: str | None = None,
 ) -> PolicyHook:
+    if bearer_token is None:
+        bearer_token = _full_scope_bearer(agent_name, user)
     return PolicyHook(
         agent_name=agent_name,
         user=user,
@@ -111,6 +131,7 @@ def _hook(
         limit_override=limit_override,
         config_dir=config_dir or _CONFIG_DIR,
         http_client=_make_client(dir_responses),
+        bearer_token=bearer_token,
     )
 
 

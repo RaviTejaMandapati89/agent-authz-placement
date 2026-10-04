@@ -15,6 +15,7 @@ import httpx
 import yaml
 
 from domain.identity import canonicalise
+from domain.scopes import TOOL_SCOPE_MAP
 from strands.hooks import BeforeToolCallEvent, HookProvider
 from strands.hooks.registry import HookRegistry
 
@@ -52,6 +53,7 @@ class PolicyHook(HookProvider):
         limit_override: int | None = None,
         config_dir: pathlib.Path | None = None,
         http_client: httpx.Client | None = None,
+        bearer_token: str = "",
     ) -> None:
         self._agent_name = agent_name
         self._user = user
@@ -61,6 +63,7 @@ class PolicyHook(HookProvider):
         limit_from_config = self._config.get("expense_limit")
         self._limit: int | None = limit_override if limit_override is not None else limit_from_config
         self._http = http_client
+        self._bearer_token = bearer_token
         self._last_dir_sim_time: float | None = None
 
     def register_hooks(self, registry: HookRegistry) -> None:
@@ -112,6 +115,11 @@ class PolicyHook(HookProvider):
                 if actual != expected:
                     return "deny", "P6", f"tool {tool_name!r} definition does not match reviewed fingerprint"
 
+        # SCOPE: bearer token must carry the required scope for this tool
+        scope_denial = self._check_scope(tool_name)
+        if scope_denial is not None:
+            return scope_denial
+
         # Tool-specific rules
         if tool_name == "submit_expense":
             return self._check_submit_expense(arguments)
@@ -123,6 +131,26 @@ class PolicyHook(HookProvider):
             return self._check_pay_vendor(arguments)
 
         return "allow", None, "permitted"
+
+    # ------------------------------------------------------------------
+    # scope check
+    # ------------------------------------------------------------------
+
+    def _check_scope(self, tool_name: str) -> tuple[str, str | None, str] | None:
+        required = TOOL_SCOPE_MAP.get(tool_name)
+        if required is None:
+            return None  # no scope requirement for this tool
+        if not self._bearer_token:
+            return "deny", "SCOPE", "missing bearer token"
+        try:
+            from domain import tokens as _tokens
+            claims = _tokens.verify_bearer(self._bearer_token)
+        except Exception as exc:
+            return "deny", "SCOPE", f"bearer token unreadable: {exc}"
+        token_scopes = set(claims.get("scope", "").split())
+        if required not in token_scopes:
+            return "deny", "SCOPE", f"missing scope {required!r}"
+        return None
 
     # ------------------------------------------------------------------
     # per-tool rule checks
