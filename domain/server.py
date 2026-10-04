@@ -278,6 +278,34 @@ def _do_pay_vendor(vendor: str, amount: float, reference: str) -> dict:
     state.record("vendor_paid", vendor=vendor, amount=amount, reference=reference)
     return payment
 
+
+def execute_tool(tool_name: str, arguments: dict, caller: dict) -> Any:
+    """Execute a tool bypassing MCP protocol. Used by the gateway."""
+    if tool_name == "read_receipt":
+        return _do_read_receipt(arguments["receipt_id"])
+    elif tool_name == "submit_expense":
+        claimant = canonicalise(arguments.get("claimant", ""))
+        return _do_submit_expense(
+            claimant, arguments["amount"], arguments["description"],
+            arguments.get("receipt_id"), arguments.get("approval_ref"),
+        )
+    elif tool_name == "approve_expense":
+        return _do_approve_expense(
+            arguments["expense_id"], approver=caller["user"],
+        )
+    elif tool_name == "book_travel":
+        traveller = canonicalise(arguments.get("traveller", ""))
+        return _do_book_travel(traveller, arguments["details"])
+    elif tool_name == "pay_vendor":
+        vendor = canonicalise(arguments.get("vendor", ""))
+        return _do_pay_vendor(
+            vendor, arguments["amount"], arguments["reference"],
+        )
+    elif tool_name == "export_all_expenses":
+        return {"expenses": list(state.expenses.values())}
+    else:
+        raise ValueError(f"unknown tool: {tool_name}")
+
 # ---------------------------------------------------------------------------
 # control endpoints
 # ---------------------------------------------------------------------------
@@ -505,6 +533,15 @@ async def _dir_expense(request: Request) -> JSONResponse:
     return JSONResponse({"claimant": expense["claimant"], "status": expense["status"]})
 
 # ---------------------------------------------------------------------------
+# gateway route — registered before streamable_http_app()
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/gateway/mcp", methods=["POST"])
+async def _gateway_mcp_route(request: Request) -> JSONResponse:
+    from domain import gateway
+    return await gateway.handle_mcp(request)
+
+# ---------------------------------------------------------------------------
 # app -- call streamable_http_app() after all route registrations
 # ---------------------------------------------------------------------------
 
@@ -515,6 +552,45 @@ if os.environ.get("ENFORCEMENT") == "cedar":
     from arms.d_boundary import pep as _cedar_pep
     _cedar_pep.install()
 # --- ARM D END ---
+
+# --- GATEWAY BEGIN ---
+if os.environ.get("GATEWAY") == "true":
+    _gw_plugin = None
+    if os.environ.get("_GATEWAY_TESTING") == "1":
+        _gw_test_name = os.environ.get("GATEWAY_TEST_PLUGIN")
+        if _gw_test_name == "allow_all":
+            def _gw_plugin(claims, agent_chain, tool, arguments):
+                return {"decision": "allow", "rule": None, "reason": "test-allow"}
+
+    if _gw_plugin is None:
+        import sys
+        sys.exit("gateway mode requires a policy plugin")
+
+    from domain.gateway import install_gateway, _compute_fingerprint
+
+    _gw_fps = {
+        _n: _compute_fingerprint(_t.name, _t.description, _t.parameters)
+        for _n, _t in mcp._tool_manager._tools.items()
+    }
+    install_gateway(
+        grants={
+            "expense-assistant": [
+                "read_receipt", "submit_expense", "approve_expense",
+            ],
+            "travel-assistant": ["book_travel"],
+            "payments-agent": ["pay_vendor"],
+        },
+        fingerprints=_gw_fps,
+        scope_map={
+            "read_receipt": "expenses:read",
+            "submit_expense": "expenses:submit",
+            "approve_expense": "expenses:approve",
+            "book_travel": "travel:book",
+            "pay_vendor": "payments:pay",
+        },
+        policy_plugin=_gw_plugin,
+    )
+# --- GATEWAY END ---
 
 # ---------------------------------------------------------------------------
 # entry point

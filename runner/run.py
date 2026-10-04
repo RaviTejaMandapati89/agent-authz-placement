@@ -247,8 +247,13 @@ def _read_decision_log(path: pathlib.Path) -> list[dict]:
     return lines
 
 
-def _direct_mcp_call(base_url: str, tool: str, args: dict, headers: dict) -> dict:
+def _direct_mcp_call(mcp_url: str, tool: str, args: dict, headers: dict) -> dict:
     """Make one MCP tool call without an agent, using raw JSON-RPC over HTTP."""
+    from urllib.parse import urlparse
+    parsed = urlparse(mcp_url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    mcp_path = parsed.path if parsed.path and parsed.path != "/" else "/mcp"
+
     common = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
@@ -258,7 +263,7 @@ def _direct_mcp_call(base_url: str, tool: str, args: dict, headers: dict) -> dic
     with httpx.Client(base_url=base_url, timeout=30.0) as client:
         # Initialise session
         r = client.post(
-            "/mcp",
+            mcp_path,
             json={
                 "jsonrpc": "2.0", "id": 1,
                 "method": "initialize",
@@ -278,7 +283,7 @@ def _direct_mcp_call(base_url: str, tool: str, args: dict, headers: dict) -> dic
 
         # Call tool
         r = client.post(
-            "/mcp",
+            mcp_path,
             json={
                 "jsonrpc": "2.0", "id": 2,
                 "method": "tools/call",
@@ -319,11 +324,12 @@ def run_one(
     git_sha: str,
     dirty: bool,
     gen: int | None = None,
+    gateway: bool = False,
 ) -> str:
     """Run one scenario and append a row to runs_out. Returns the run status."""
     scenario = _load_scenario(scenario_id)
     run_id = str(uuid.uuid4())
-    mcp_url = f"{base_url}/mcp"
+    mcp_url = f"{base_url}/gateway/mcp" if gateway else f"{base_url}/mcp"
 
     # Load the arm module first so its policy state can always be reset, even
     # for n/a scenarios. Without this, a policy change from a previous scenario

@@ -5,6 +5,7 @@ import pathlib
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
@@ -35,17 +36,38 @@ def domain_server(decision_log: str, env_extra: dict | None = None):
         **os.environ,
         "SERVER_PORT": str(port),
         "DECISION_LOG": decision_log,
-        **(env_extra or {}),
     }
+    for key in ("_GATEWAY_TESTING", "GATEWAY_TEST_PLUGIN"):
+        env.pop(key, None)
+    env.update(env_extra or {})
+    stderr_file = tempfile.NamedTemporaryFile(
+        mode="w+", suffix=".stderr", delete=False,
+    )
     proc = subprocess.Popen(
         [sys.executable, "-m", "domain.server"],
         env=env,
         cwd=str(_REPO_ROOT),
+        stderr=stderr_file,
     )
     try:
         wait_for_port(port)
         base_url = f"http://127.0.0.1:{port}"
         yield port, base_url
+    except RuntimeError:
+        proc.terminate()
+        proc.wait()
+        stderr_file.seek(0)
+        stderr = stderr_file.read()
+        stderr_file.close()
+        os.unlink(stderr_file.name)
+        raise RuntimeError(
+            f"port {port} did not open after timeout; server stderr:\n{stderr}"
+        ) from None
     finally:
         proc.terminate()
         proc.wait()
+        try:
+            stderr_file.close()
+            os.unlink(stderr_file.name)
+        except FileNotFoundError:
+            pass

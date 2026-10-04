@@ -728,10 +728,15 @@ async def test_tool_call_bad_signature_rejected(http_client, log_path, running_a
     })
     good_token = resp.json()["access_token"]
 
-    # Corrupt the signature: flip the last character
-    last = good_token[-1]
-    flipped = "A" if last != "A" else "B"
-    bad_token = good_token[:-1] + flipped
+    # Corrupt only the signature segment so the header and payload stay
+    # parseable and PyJWT reaches the signature-verification step.
+    parts = good_token.split(".")
+    assert len(parts) == 3
+    sig = parts[2]
+    mid = len(sig) // 2
+    replacement = "A" if sig[mid] != "A" else "B"
+    parts[2] = sig[:mid] + replacement + sig[mid + 1:]
+    bad_token = ".".join(parts)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=running_app),
