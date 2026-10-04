@@ -1,4 +1,4 @@
-"""Single authoritative tool-to-scope map shared by the gateway and approach 2."""
+"""Single authoritative map from tool name to required OAuth scope."""
 
 TOOL_SCOPE_MAP: dict[str, str] = {
     "read_receipt":    "expenses:read",

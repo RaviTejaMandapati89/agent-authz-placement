@@ -51,6 +51,8 @@ def _load_arm(arm: str) -> object:
             from arms.c_hook import agent as m
         elif arm == "D":
             from arms.d_boundary import agent as m
+        elif arm == "3":
+            from arms.approach3 import agent as m
         else:
             raise ValueError(f"arm {arm!r} not built")
         _ARM_MODULES[arm] = m
