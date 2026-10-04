@@ -1052,3 +1052,143 @@ def test_g5_generate_sh_allows_edit_to_specify_feature_json():
     assert "Edit(./.specify/feature.json)" in text, (
         "generate.sh must include Edit(./.specify/feature.json) in its allowedTools (G5)"
     )
+
+
+# ---------------------------------------------------------------------------
+# G6: uv sync must run in the kit before the first generation step
+# ---------------------------------------------------------------------------
+
+def test_g6_generate_sh_runs_uv_sync_before_generation():
+    """G6: generate.sh must run 'uv sync' in the kit before the first generation step."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+
+    assert "uv sync" in text, (
+        "generate.sh must run 'uv sync' to install dependencies before generation steps (G6)"
+    )
+
+    sync_pos = text.find("uv sync")
+    first_run_step_pos = text.find("run_step ")
+    assert first_run_step_pos != -1, "generate.sh has no run_step call"
+    assert sync_pos < first_run_step_pos, (
+        f"'uv sync' (pos {sync_pos}) must appear before the first 'run_step' "
+        f"call (pos {first_run_step_pos}) in generate.sh (G6)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# G7: allowed tools include Glob and Grep scoped to the kit;
+#     do NOT include Bash(find, Bash(ls, Bash(python -c, Bash(uv run python
+# ---------------------------------------------------------------------------
+
+def test_g7_generate_sh_allows_glob_scoped_to_kit():
+    """G7: generate.sh allowed-tools must include a kit-scoped Glob(./**) (read-only)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Glob\(\.\/", text), (
+        "generate.sh must include Glob(./**) or similar kit-scoped Glob in allowedTools (G7)"
+    )
+
+
+def test_g7_generate_sh_allows_grep_scoped_to_kit():
+    """G7: generate.sh allowed-tools must include a kit-scoped Grep(./**) (read-only)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Grep\(\.\/", text), (
+        "generate.sh must include Grep(./**) or similar kit-scoped Grep in allowedTools (G7)"
+    )
+
+
+def test_g7_generate_sh_does_not_allow_bash_find():
+    """G7: generate.sh must not allow Bash(find ...) in its allowed-tools."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert not re.search(r"Bash\(find\b", text), (
+        "generate.sh must not permit Bash(find ...) in allowedTools (G7)"
+    )
+
+
+def test_g7_generate_sh_does_not_allow_bash_ls():
+    """G7: generate.sh must not allow Bash(ls ...) in its allowed-tools."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert not re.search(r"Bash\(ls\b", text), (
+        "generate.sh must not permit Bash(ls ...) in allowedTools (G7)"
+    )
+
+
+def test_g7_generate_sh_does_not_allow_python_c():
+    """G7: generate.sh must not allow Bash(python -c ...) in its allowed-tools."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert not re.search(r"Bash\(python\s+-c", text), (
+        "generate.sh must not permit Bash(python -c ...) in allowedTools (G7)"
+    )
+
+
+def test_g7_generate_sh_does_not_allow_uv_run_python():
+    """G7: generate.sh must not allow Bash(uv run python ...) in its allowed-tools."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert not re.search(r"Bash\(uv run python\b", text), (
+        "generate.sh must not permit Bash(uv run python ...) in allowedTools (G7)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# G8: Write/Edit for ./tests/generated/** only; spec_input.md names that path;
+#     seal check detects modification of tests/test_contract.py vs. built kit
+# ---------------------------------------------------------------------------
+
+def test_g8_generate_sh_allows_write_to_tests_generated():
+    """G8: generate.sh allowed-tools must permit Write inside ./tests/generated/."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Write\(\.\/tests\/generated\/", text), (
+        "generate.sh must include Write(./tests/generated/**) in its allowedTools (G8)"
+    )
+
+
+def test_g8_generate_sh_allows_edit_to_tests_generated():
+    """G8: generate.sh allowed-tools must permit Edit inside ./tests/generated/."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Edit\(\.\/tests\/generated\/", text), (
+        "generate.sh must include Edit(./tests/generated/**) in its allowedTools (G8)"
+    )
+
+
+def test_g8_spec_input_says_generator_tests_in_tests_generated():
+    """G8: spec_input.md must state that the generator's own tests go in tests/generated/."""
+    text = (_APPROACH3 / "spec_input.md").read_text(encoding="utf-8")
+    assert "tests/generated" in text, (
+        "spec_input.md must mention tests/generated/ as the location for "
+        "the generator's own tests (G8)"
+    )
+
+
+def test_g8_seal_check_detects_modified_kit_file(tmp_path):
+    """G8: seal_check must detect if tests/test_contract.py or any other kit file
+    was modified relative to the kit as built by build_kit.
+    """
+    import shutil
+    from arms.approach3.import_gen import seal_check
+    from arms.approach3.make_kit import build_kit
+
+    ref = tmp_path / "ref"
+    build_kit(ref)
+
+    run_kit = tmp_path / "run"
+    shutil.copytree(ref, run_kit)
+    (run_kit / "tests" / "test_contract.py").write_text(
+        "# tampered by generator\n", encoding="utf-8"
+    )
+
+    result = seal_check(run_kit)
+    assert result["status"] != "clean", (
+        "seal_check must detect modification of tests/test_contract.py "
+        f"vs. the built kit (G8); got status {result['status']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# G9: Bash(./.specify/scripts/bash/*) must be in allowedTools
+# ---------------------------------------------------------------------------
+
+def test_g9_generate_sh_allows_specify_scripts_bash():
+    """G9: generate.sh must include Bash(./.specify/scripts/bash/*) in allowedTools."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Bash\(\.\/\.specify\/scripts\/bash\/", text), (
+        "generate.sh must include Bash(./.specify/scripts/bash/*) in its allowedTools (G9)"
+    )

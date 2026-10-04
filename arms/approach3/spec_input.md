@@ -157,4 +157,5 @@ The checkpoint may only import from:
 
 `checkpoint.py` is the only source file the generator produces. Spec Kit's
 own specification, plan, and task documents are permitted in the kit folder
-alongside `checkpoint.py`.
+alongside `checkpoint.py`. The generator may also write its own tests to
+`tests/generated/`; those files are not imported by the pipeline.

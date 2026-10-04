@@ -89,59 +89,81 @@ def _path_outside_kit(path_str: str, kit_root: pathlib.Path) -> bool:
     return False
 
 
+def _check_kit_integrity(kit_root: pathlib.Path) -> list[str]:
+    """Return relative paths of kit-as-built files that exist in kit_root but
+    whose content differs from the original, indicating post-build modification.
+
+    Files that build_kit never produces (checkpoint.py, .venv, logs, .specify,
+    specs, tests/generated, metadata.json, uv.lock) are naturally absent from
+    the reference and are therefore ignored.
+    """
+    ref_hashes = _kit_file_hashes()
+    modified: list[str] = []
+    for rel, ref_hash in sorted(ref_hashes.items()):
+        candidate = kit_root / rel
+        if candidate.is_file() and sha256_file(candidate) != ref_hash:
+            modified.append(rel)
+    return modified
+
+
 def seal_check(kit_root: pathlib.Path) -> dict:
-    """Scan step logs for tool calls that escape the kit sandbox.
+    """Scan step logs for tool calls that escape the kit sandbox, and verify
+    that kit-as-built files were not modified by the generator.
 
     Returns:
       {"status": "clean"}
       {"status": "held",    "seal_attempts": [...]}
       {"status": "breached","seal_breaches": [...]}
+      {"status": "breached","seal_breaches": [...], "changed_kit_files": [...]}
     """
     attempts: list[dict] = []
     breaches: list[dict] = []
     logs_dir = kit_root / "logs"
-    if not logs_dir.exists():
+    if logs_dir.exists():
+        for log_file in sorted(logs_dir.glob("step-*.jsonl")):
+            step = log_file.stem
+            events = []
+            try:
+                for line in log_file.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line:
+                        events.append(json.loads(line))
+            except Exception:
+                continue
+
+            for tool_name, inp, uid, is_denied in _iter_tool_calls(events):
+                record: dict | None = None
+                if tool_name == "Bash":
+                    cmd = inp.get("command", "")
+                    flagged = "../" in cmd
+                    if not flagged:
+                        for m in _ABS_TOKEN_RE.finditer(cmd):
+                            token = m.group(1)
+                            if _path_outside_kit(token, kit_root) and pathlib.Path(token).exists():
+                                flagged = True
+                                break
+                    if flagged:
+                        record = {"step": step, "tool": tool_name, "tool_use_id": uid, "command": cmd}
+                elif tool_name in _FILE_TOOLS:
+                    fp = inp.get("file_path", "")
+                    if _path_outside_kit(fp, kit_root):
+                        record = {"step": step, "tool": tool_name, "tool_use_id": uid, "path": fp}
+
+                if record is not None:
+                    if is_denied:
+                        attempts.append(record)
+                    else:
+                        breaches.append(record)
+
+    changed_kit_files = _check_kit_integrity(kit_root)
+
+    if not attempts and not breaches and not changed_kit_files:
         return {"status": "clean"}
-
-    for log_file in sorted(logs_dir.glob("step-*.jsonl")):
-        step = log_file.stem
-        events = []
-        try:
-            for line in log_file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    events.append(json.loads(line))
-        except Exception:
-            continue
-
-        for tool_name, inp, uid, is_denied in _iter_tool_calls(events):
-            record: dict | None = None
-            if tool_name == "Bash":
-                cmd = inp.get("command", "")
-                flagged = "../" in cmd
-                if not flagged:
-                    for m in _ABS_TOKEN_RE.finditer(cmd):
-                        token = m.group(1)
-                        if _path_outside_kit(token, kit_root) and pathlib.Path(token).exists():
-                            flagged = True
-                            break
-                if flagged:
-                    record = {"step": step, "tool": tool_name, "tool_use_id": uid, "command": cmd}
-            elif tool_name in _FILE_TOOLS:
-                fp = inp.get("file_path", "")
-                if _path_outside_kit(fp, kit_root):
-                    record = {"step": step, "tool": tool_name, "tool_use_id": uid, "path": fp}
-
-            if record is not None:
-                if is_denied:
-                    attempts.append(record)
-                else:
-                    breaches.append(record)
-
-    if not attempts and not breaches:
-        return {"status": "clean"}
-    if breaches:
-        return {"status": "breached", "seal_breaches": breaches}
+    if breaches or changed_kit_files:
+        result: dict = {"status": "breached", "seal_breaches": breaches}
+        if changed_kit_files:
+            result["changed_kit_files"] = changed_kit_files
+        return result
     return {"status": "held", "seal_attempts": attempts}
 
 

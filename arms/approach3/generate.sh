@@ -126,8 +126,12 @@ CURRENT_STEP="speckit-init"
 specify init . --integration claude --force --non-interactive
 mkdir -p logs
 
+# --- step 2.5: install kit dependencies ---
+CURRENT_STEP="uv-sync"
+uv sync
+
 # --- step 3: run the five SDD skills ---
-TOOLS_BASE="Read(./**),Write(./checkpoint.py),Write(./specs/**),Write(./.specify/memory/**),Write(./.specify/feature.json),Edit(./checkpoint.py),Edit(./specs/**),Edit(./.specify/memory/**),Edit(./.specify/feature.json),Bash(.specify/scripts/bash/*),Bash(bash .specify/scripts/bash/*),Bash(git init),Bash(git add *),Bash(git commit *),Bash(git checkout -b *),Bash(mkdir -p *),Bash(uv run pytest*)"
+TOOLS_BASE="Read(./**),Glob(./**),Grep(./**),Write(./checkpoint.py),Write(./specs/**),Write(./.specify/memory/**),Write(./.specify/feature.json),Write(./tests/generated/**),Edit(./checkpoint.py),Edit(./specs/**),Edit(./.specify/memory/**),Edit(./.specify/feature.json),Edit(./tests/generated/**),Bash(.specify/scripts/bash/*),Bash(./.specify/scripts/bash/*),Bash(bash .specify/scripts/bash/*),Bash(git init),Bash(git add *),Bash(git commit *),Bash(git checkout -b *),Bash(mkdir -p *),Bash(uv run pytest*)"
 
 run_step() {
     local name="$1"
