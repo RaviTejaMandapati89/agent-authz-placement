@@ -1032,3 +1032,23 @@ def test_g4_forbidden_check_rejects_planted_repo_name(tmp_path):
     assert any("agent-authz-placement" in h for h in hits), (
         f"hits did not mention 'agent-authz-placement': {hits}"
     )
+
+
+# ---------------------------------------------------------------------------
+# G5: Write and Edit for ./.specify/feature.json must be in allowedTools
+# ---------------------------------------------------------------------------
+
+def test_g5_generate_sh_allows_write_to_specify_feature_json():
+    """G5: generate.sh allowed-tools must permit Write(./.specify/feature.json)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert "Write(./.specify/feature.json)" in text, (
+        "generate.sh must include Write(./.specify/feature.json) in its allowedTools (G5)"
+    )
+
+
+def test_g5_generate_sh_allows_edit_to_specify_feature_json():
+    """G5: generate.sh allowed-tools must permit Edit(./.specify/feature.json)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert "Edit(./.specify/feature.json)" in text, (
+        "generate.sh must include Edit(./.specify/feature.json) in its allowedTools (G5)"
+    )
