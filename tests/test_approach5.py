@@ -22,7 +22,7 @@ from domain.grants import AGENT_GRANTS as GATEWAY_GRANTS
 # ---------------------------------------------------------------------------
 
 _REPO              = pathlib.Path(__file__).parent.parent
-_A5_POLICIES_DIR   = _REPO / "arms" / "approach5" / "policies"
+_A5_POLICIES_DIR   = _REPO / "arms" / "shared" / "policies"
 _CENTRAL_POLICY    = _REPO / "domain" / "central_policy.cedar"
 _SHARED_FP         = _REPO / "domain" / "fingerprints.json"
 _OLD_A4_FP         = _REPO / "arms" / "approach4" / "fingerprints.json"

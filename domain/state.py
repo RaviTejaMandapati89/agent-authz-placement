@@ -29,6 +29,22 @@ class State:
         self.arm: str | None = None
         self.ledger: list = []
 
+    def revoke_delegation(self, delegation_id: str) -> None:
+        delegator = ""
+        delegate = ""
+        scope: list = []
+        for d in self.delegations:
+            if d["id"] == delegation_id:
+                d["active"] = False
+                delegator = d.get("delegator", "")
+                delegate = d.get("delegate", "")
+                scope = list(d.get("scope", []))
+                break
+        from domain import server as _server
+        sim_now = simclock.now()
+        for listener in _server._revocation_listeners:
+            listener(delegation_id, delegator, delegate, scope, sim_now)
+
     def record(self, action_type: str, **fields) -> None:
         self.ledger.append(
             {

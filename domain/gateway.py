@@ -61,13 +61,32 @@ def install_gateway(
     _skip_token_expiry = getattr(policy_plugin, "skip_token_expiry", False)
     _active = True
 
+    if hasattr(policy_plugin, "process_clock_advance"):
+        if policy_plugin.process_clock_advance not in srv._clock_advance_listeners:
+            srv._clock_advance_listeners.append(policy_plugin.process_clock_advance)
+    if hasattr(policy_plugin, "on_recovery"):
+        if policy_plugin.on_recovery not in srv._recovery_listeners:
+            srv._recovery_listeners.append(policy_plugin.on_recovery)
+
 
 def remove_gateway() -> None:
     global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise, _skip_token_expiry
 
+    import domain.server as srv
     if _prev_authorise is not None:
-        import domain.server as srv
         srv.authorise = _prev_authorise
+
+    if _policy_plugin is not None:
+        if hasattr(_policy_plugin, "process_clock_advance"):
+            try:
+                srv._clock_advance_listeners.remove(_policy_plugin.process_clock_advance)
+            except ValueError:
+                pass
+        if hasattr(_policy_plugin, "on_recovery"):
+            try:
+                srv._recovery_listeners.remove(_policy_plugin.on_recovery)
+            except ValueError:
+                pass
 
     _active = False
     _grants = {}
@@ -122,7 +141,7 @@ def _gw_decision_line(
     call_id: str, caller: dict, tool_name: str,
     arguments: dict, decision: dict,
 ) -> None:
-    _append_log({
+    entry: dict = {
         "type": "decision",
         "call_id": call_id,
         "layer": "gateway",
@@ -137,7 +156,11 @@ def _gw_decision_line(
         "reason": decision["reason"],
         "central_called": decision.get("central_called", False),
         "central_duration_ms": decision.get("central_duration_ms", 0),
-    })
+    }
+    for key in ("central_copy_version", "revocation_applied"):
+        if key in decision:
+            entry[key] = decision[key]
+    _append_log(entry)
 
 
 def _gw_outcome_line(
@@ -259,6 +282,9 @@ async def _check_pipeline(
         "central_called": result.get("central_called", False),
         "central_duration_ms": result.get("central_duration_ms", 0),
     }
+    for key in ("central_copy_version", "revocation_applied"):
+        if key in result:
+            decision[key] = result[key]
     return caller, decision, call_id
 
 

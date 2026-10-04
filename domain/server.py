@@ -15,6 +15,40 @@ from domain.identity import canonicalise
 from domain.state import reset, state
 
 # ---------------------------------------------------------------------------
+# Revocation listeners and reset callbacks (approach 6)
+# ---------------------------------------------------------------------------
+
+_revocation_listeners: list = []
+_reset_callbacks: list = []
+_clock_advance_listeners: list = []
+_recovery_listeners: list = []
+
+
+def register_revocation_listener(fn) -> None:
+    if fn not in _revocation_listeners:
+        _revocation_listeners.append(fn)
+
+
+def deregister_revocation_listener(fn) -> None:
+    try:
+        _revocation_listeners.remove(fn)
+    except ValueError:
+        pass
+
+
+def register_reset_callback(fn) -> None:
+    if fn not in _reset_callbacks:
+        _reset_callbacks.append(fn)
+
+
+def deregister_reset_callback(fn) -> None:
+    try:
+        _reset_callbacks.remove(fn)
+    except ValueError:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # authorise callback
 # ---------------------------------------------------------------------------
 
@@ -318,6 +352,8 @@ async def _ctrl_reset(request: Request) -> JSONResponse:
     mcp.remove_tool("pay_vendor")
     mcp.add_tool(_pay_vendor_fn, name="pay_vendor", description=_PAY_VENDOR_DESC)
     reset()  # also resets simclock via state.reset()
+    for fn in _reset_callbacks:
+        fn()
     # --- ARM D BEGIN ---
     if os.environ.get("ENFORCEMENT") == "cedar":
         from arms.d_boundary import pep as _pep
@@ -337,16 +373,22 @@ async def _ctrl_clock_set(request: Request) -> JSONResponse:
 async def _ctrl_clock_advance(request: Request) -> JSONResponse:
     body = await request.json()
     simclock.advance(float(body["seconds"]))
-    return JSONResponse({"sim_time": simclock.now()})
+    now = simclock.now()
+    # --- GATEWAY BEGIN ---
+    from domain import gateway as _gw_mod
+    if _gw_mod.is_active():
+        from domain import central_publisher
+        central_publisher.process_clock_advance(now)
+    # --- GATEWAY END ---
+    for fn in _clock_advance_listeners:
+        fn(now)
+    return JSONResponse({"sim_time": now})
 
 
 @mcp.custom_route("/control/revoke-delegation", methods=["POST"])
 async def _ctrl_revoke_delegation(request: Request) -> JSONResponse:
     body = await request.json()
-    did = body["delegation_id"]
-    for d in state.delegations:
-        if d["id"] == did:
-            d["active"] = False
+    state.revoke_delegation(body["delegation_id"])
     return JSONResponse({"ok": True})
 
 
@@ -385,7 +427,18 @@ async def _ctrl_poison_tool(request: Request) -> JSONResponse:
 @mcp.custom_route("/control/directory-down", methods=["POST"])
 async def _ctrl_directory_down(request: Request) -> JSONResponse:
     body = await request.json()
+    was_down = state.directory_down
     state.directory_down = bool(body["down"])
+    if was_down and not state.directory_down:
+        now = simclock.now()
+        # --- GATEWAY BEGIN ---
+        from domain import gateway as _gw_mod
+        if _gw_mod.is_active():
+            from domain import central_publisher
+            central_publisher.on_recovery(now)
+        # --- GATEWAY END ---
+        for fn in _recovery_listeners:
+            fn(now)
     return JSONResponse({"ok": True})
 
 
@@ -589,6 +642,13 @@ if os.environ.get("GATEWAY") == "true":
         import importlib as _importlib
         _a5_mod = _importlib.import_module("arm" + "s.approach5.plugin")
         _gw_plugin = _a5_mod.evaluate
+
+    if _gw_plugin is None and os.environ.get("GATEWAY_PLUGIN") == "approach6":
+        import importlib as _importlib
+        _a6_mod = _importlib.import_module("arm" + "s.approach6.plugin")
+        _gw_plugin = _a6_mod.evaluate
+        _revocation_listeners.append(_a6_mod.push_revocation)
+        _reset_callbacks.append(_a6_mod.reset)
 
     if _gw_plugin is None:
         import sys

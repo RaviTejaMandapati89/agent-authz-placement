@@ -9,7 +9,7 @@ import time
 import cedarpy
 import httpx
 
-_POLICIES_DIR = pathlib.Path(__file__).parent / "policies"
+_POLICIES_DIR = pathlib.Path(__file__).parent.parent / "shared" / "policies"
 
 AGENT_USE_CASE: dict[str, str] = {
     "expense-assistant": "expenses",

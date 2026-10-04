@@ -24,7 +24,7 @@ _REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
 _B_SPEC    = pathlib.Path(__file__).parent
 
 # Words that must not appear anywhere in the kit (case-sensitive).
-_FORBIDDEN = ["cedar", "d_boundary", "c_hook", "hook", "arms", "PREREG"]
+_FORBIDDEN = ["cedar", "d_boundary", "c_hook", "hook", "arms", "PREREG", "central_publisher"]
 
 _ARM_D_MARKER_RE = re.compile(
     r"[ \t]*# --- ARM D BEGIN ---.*?# --- ARM D END ---\n?",

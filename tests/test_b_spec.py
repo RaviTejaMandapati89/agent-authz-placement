@@ -86,7 +86,7 @@ def test_real_kit_passes_forbidden_word_check(tmp_path):
 
 def test_forbidden_word_check_all_words(tmp_path):
     """_check_forbidden reports every distinct forbidden word it finds."""
-    forbidden_words = ["cedar", "d_boundary", "c_hook", "hook", "arms", "PREREG"]
+    forbidden_words = ["cedar", "d_boundary", "c_hook", "hook", "arms", "PREREG", "central_publisher"]
     content = "\n".join(f"x_{w} = '{w}'" for w in forbidden_words)
     (tmp_path / "multi.py").write_text(content, encoding="utf-8")
     hits = _check_forbidden(tmp_path)
@@ -178,6 +178,58 @@ asyncio.run(main())
     )
     assert result.returncode == 0, (
         f"Kit server failed in non-gateway mode.\n"
+        f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+    )
+    assert "OK" in result.stdout
+
+
+def test_kit_server_clock_advance_succeeds(tmp_path):
+    """Kit domain/server.py must handle POST /control/clock/advance without error.
+
+    The clock-advance route must NOT reference central_publisher (a gateway-only
+    module absent from the kit).  If the GATEWAY BEGIN/END markers do not wrap the
+    central_publisher calls, build_kit raises RuntimeError (word leak), and if they
+    are somehow present without the markers the import fails at runtime.
+
+    Fails right now because the central_publisher calls in the clock route sit
+    outside the GATEWAY markers and therefore appear in the built kit.
+    """
+    import subprocess
+    import sys
+    from arms.b_spec.make_kit import build_kit
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+
+    script = f"""
+import sys
+sys.path.insert(0, {str(kit)!r})
+import asyncio, httpx
+from domain.server import app, mcp
+
+async def main():
+    async with mcp._session_manager.run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://localhost:8765",
+            headers={{"Host": "localhost:8765"}},
+        ) as client:
+            resp = await client.post(
+                "/control/clock/advance",
+                json={{"seconds": 60}},
+                headers={{"Content-Type": "application/json"}},
+            )
+            assert resp.status_code == 200, f"status={{resp.status_code}} body={{resp.text[:200]}}"
+            print("OK")
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"Kit server clock advance failed.\n"
         f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     )
     assert "OK" in result.stdout
