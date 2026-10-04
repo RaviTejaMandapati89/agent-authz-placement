@@ -1,0 +1,6 @@
+agent: payments-agent
+acts_for: finance
+allowed_tools:
+- pay_vendor
+fingerprints:
+  pay_vendor: f1575b00b8dcebc74ab7e131ae0e5724f1d95caeb74562e987ebe7d7320649e1

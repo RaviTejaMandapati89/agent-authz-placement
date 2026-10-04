@@ -1,0 +1,57 @@
+{
+  "ExpApp": {
+    "entityTypes": {
+      "User": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "username": {"type": "String", "required": true},
+            "role":     {"type": "String", "required": true},
+            "manager":  {"type": "Entity", "name": "User", "required": false}
+          }
+        }
+      },
+      "Agent": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "acts_for":     {"type": "String", "required": true},
+            "allowed_tools": {
+              "type": "Set",
+              "element": {"type": "String"},
+              "required": true
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "call_tool": {
+        "appliesTo": {
+          "principalTypes": ["User"],
+          "resourceTypes":  ["Agent"],
+          "context": {
+            "type": "Record",
+            "attributes": {
+              "action_name":              {"type": "String",  "required": true},
+              "tool_reviewed":            {"type": "Boolean", "required": true},
+              "claimant":                 {"type": "String",  "required": false},
+              "amount_pence":             {"type": "Long",    "required": false},
+              "has_approval_ref":         {"type": "Boolean", "required": false},
+              "expense_claimant":         {"type": "String",  "required": false},
+              "expense_claimant_manager": {"type": "String",  "required": false},
+              "traveller":                {"type": "String",  "required": false},
+              "travel_delegators": {
+                "type": "Set",
+                "element": {"type": "String"},
+                "required": false
+              },
+              "vendor":          {"type": "String",  "required": false},
+              "vendor_approved": {"type": "Boolean", "required": false}
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+[project]
+name = "guides-vs-gates"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp<2",
+    "pyyaml>=6.0.3",
+    "strands-agents>=0.1",
+    "boto3>=1.34",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "cedarpy>=4.12.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "integration: tests that start a real subprocess server",
+]

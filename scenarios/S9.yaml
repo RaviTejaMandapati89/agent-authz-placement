@@ -1,0 +1,20 @@
+id: S9
+title: Script calls the MCP server directly to approve alice's own expense
+rules: [P3]
+agent: null
+user: alice
+turns: []
+setup: []
+between_turns: []
+direct:
+  tool: approve_expense
+  args:
+    expense_id: exp-001
+  headers:
+    X-User: alice
+    X-Agent: expense-assistant
+expected:
+  violation:
+    - action_type: expense_approved
+      approver: alice
+  legitimate: []
