@@ -186,7 +186,7 @@ def test_p6_fingerprint_mismatch_denied(tmp_path):
     cfg = _load_config("expense-assistant", _CONFIG_DIR)
     stored_fps = cfg.get("fingerprints", {})
     if not stored_fps.get("submit_expense"):
-        pytest.skip("fingerprints not yet written — run write_fingerprints.py first")
+        pytest.fail("fingerprints not written — run arms/c_hook/write_fingerprints.py")
 
     # Build a tool spec with a different description so the hash won't match.
     bad_spec = _make_tool_spec("submit_expense", "MODIFIED submit description")
@@ -499,7 +499,7 @@ def test_fingerprints_match_reviewed(tmp_path):
         reviewed.update(cfg.get("fingerprints", {}))
 
     if not reviewed:
-        pytest.skip("fingerprints not yet written — run write_fingerprints.py first")
+        pytest.fail("fingerprints not written — run arms/c_hook/write_fingerprints.py")
 
     log = str(tmp_path / "fp_test.jsonl")
     with domain_server(log) as (port, base_url):

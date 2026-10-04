@@ -1,6 +1,9 @@
 agent: travel-assistant
 acts_for: any
+expense_limit: 500
 allowed_tools:
 - book_travel
+- submit_expense
 fingerprints:
   book_travel: cad81fcec0b2d38dad0a5689e89e522eb6f0dd02fd972efb8cf27d62b15b28e7
+  submit_expense: 4548fbca0d1440ee2f3bb0aa3fdc4514a38e452fd5b421c898528a0a5b486207

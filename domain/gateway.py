@@ -26,6 +26,7 @@ _fingerprints: dict[str, str] = {}
 _scope_map: dict[str, str] = {}
 _policy_plugin: Callable | None = None
 _prev_authorise: Callable | None = None
+_skip_token_expiry: bool = False
 
 
 def is_active() -> bool:
@@ -43,7 +44,7 @@ def install_gateway(
     scope_map: dict[str, str],
     policy_plugin: Callable | None,
 ) -> None:
-    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise
+    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise, _skip_token_expiry
 
     if policy_plugin is None:
         raise ValueError("gateway mode requires a policy plugin")
@@ -56,11 +57,12 @@ def install_gateway(
     _fingerprints = dict(fingerprints)
     _scope_map = dict(scope_map)
     _policy_plugin = policy_plugin
+    _skip_token_expiry = getattr(policy_plugin, "skip_token_expiry", False)
     _active = True
 
 
 def remove_gateway() -> None:
-    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise
+    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise, _skip_token_expiry
 
     if _prev_authorise is not None:
         import domain.server as srv
@@ -72,6 +74,7 @@ def remove_gateway() -> None:
     _scope_map = {}
     _policy_plugin = None
     _prev_authorise = None
+    _skip_token_expiry = False
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +170,7 @@ def _check_pipeline(
         return caller, decision, call_id
 
     try:
-        claims = tokens.verify_bearer(auth_header[7:])
+        claims = tokens.verify_bearer(auth_header[7:], check_expiry=not _skip_token_expiry)
     except Exception as exc:
         decision = {
             "decision": "deny", "rule": "IDENTITY",

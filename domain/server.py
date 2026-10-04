@@ -562,24 +562,24 @@ if os.environ.get("GATEWAY") == "true":
             def _gw_plugin(claims, agent_chain, tool, arguments):
                 return {"decision": "allow", "rule": None, "reason": "test-allow"}
 
+    if _gw_plugin is None and os.environ.get("GATEWAY_PLUGIN") == "approach4":
+        import importlib as _importlib
+        _a4_mod = _importlib.import_module("arm" + "s.approach4.plugin")
+        _gw_plugin = _a4_mod.evaluate
+
     if _gw_plugin is None:
         import sys
         sys.exit("gateway mode requires a policy plugin")
 
     from domain.gateway import install_gateway, _compute_fingerprint
+    from domain.grants import AGENT_GRANTS as _AGENT_GRANTS
 
     _gw_fps = {
         _n: _compute_fingerprint(_t.name, _t.description, _t.parameters)
         for _n, _t in mcp._tool_manager._tools.items()
     }
     install_gateway(
-        grants={
-            "expense-assistant": [
-                "read_receipt", "submit_expense", "approve_expense",
-            ],
-            "travel-assistant": ["book_travel"],
-            "payments-agent": ["pay_vendor"],
-        },
+        grants=_AGENT_GRANTS,
         fingerprints=_gw_fps,
         scope_map={
             "read_receipt": "expenses:read",

@@ -34,8 +34,8 @@ _B_SPEC_DIR = _REPO_ROOT / "arms" / "b_spec"
 
 _AGENT_SCOPES: dict[str, list[str]] = {
     "expense-assistant": ["expenses:read", "expenses:submit", "expenses:approve"],
-    "travel-assistant": ["travel:book"],
-    "payments-agent": ["payments:pay"],
+    "travel-assistant": ["expenses:submit", "travel:book"],
+    "payments-agent": ["expenses:approve", "payments:pay"],
 }
 
 _ARM_MODULES: dict[str, object] = {}

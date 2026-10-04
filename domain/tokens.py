@@ -7,6 +7,7 @@ Two separate EC P-256 key pairs (ES256):
 Private keys stay in-process; never written to disk.
 Public keys served via jwks().
 """
+import datetime
 import json
 from typing import Any
 
@@ -32,6 +33,8 @@ USER_ISSUER: str = "identity-issuer"
 
 _AGENT_KID: str = "agent-key"
 _USER_KID: str = "user-key"
+
+_PERSON_CLAIM_KEYS: frozenset[str] = frozenset({"role", "reports_to", "delegations_received"})
 
 # Generated at import time; never written to disk.
 _agent_private_key = generate_private_key(SECP256R1(), default_backend())
@@ -85,11 +88,51 @@ def issue_agent_token(sub: str, aud: str, scope: list[str], lifetime: int = DEFA
 
 
 def issue_user_token(sub: str, aud: str, scope: list[str], lifetime: int = DEFAULT_LIFETIME) -> str:
-    """Issue a token signed by identity-issuer."""
-    return _issue(USER_ISSUER, sub, aud, scope, lifetime)
+    """Issue a token signed by identity-issuer, with person claims from current state."""
+    from domain.state import state
+
+    lifetime = max(1, lifetime)  # no MAX_LIFETIME cap for user tokens
+    now_ts = int(simclock.now())
+    valid_scope = sorted(s for s in scope if s in FIXED_SCOPES)
+
+    user_info = state.users.get(sub, {})
+    role = user_info.get("role", "")
+    reports_to = [u for u, info in state.users.items() if info.get("manager") == sub]
+
+    delegations_received = []
+    for d in state.delegations:
+        if not d.get("active", False):
+            continue
+        if d.get("delegate") != sub:
+            continue
+        exp_str = d.get("expires")
+        if exp_str:
+            exp_ts = datetime.datetime.fromisoformat(
+                exp_str.replace("Z", "+00:00")
+            ).timestamp()
+            if exp_ts <= simclock.now():
+                continue
+        delegations_received.append({
+            "delegator": d["delegator"],
+            "scope": list(d.get("scope", [])),
+            "expires": d.get("expires"),
+        })
+
+    payload = {
+        "iss": USER_ISSUER,
+        "sub": sub,
+        "aud": aud,
+        "scope": " ".join(valid_scope),
+        "iat": now_ts,
+        "exp": now_ts + lifetime,
+        "role": role,
+        "reports_to": reports_to,
+        "delegations_received": delegations_received,
+    }
+    return _encode(payload, _USER_KID)
 
 
-def _verify_one(token: str, audience: str | None = None) -> dict:
+def _verify_one(token: str, audience: str | None = None, check_expiry: bool = True) -> dict:
     """Verify a token against our known keys. Raises jwt.JWTError on failure."""
     try:
         header = jwt.get_unverified_header(token)
@@ -115,8 +158,7 @@ def _verify_one(token: str, audience: str | None = None) -> dict:
         options=opts,
     )
 
-    # Manual expiry check against simulated clock (not real time)
-    if claims.get("exp", 0) < simclock.now():
+    if check_expiry and claims.get("exp", 0) < simclock.now():
         raise jwt.ExpiredSignatureError("token has expired")
 
     # Issuer must match the key's registered issuer
@@ -128,9 +170,9 @@ def _verify_one(token: str, audience: str | None = None) -> dict:
     return claims
 
 
-def verify_bearer(token: str, audience: str = SERVER_AUDIENCE) -> dict:
+def verify_bearer(token: str, audience: str = SERVER_AUDIENCE, check_expiry: bool = True) -> dict:
     """Verify a Bearer token presented to a tool call. Raises jwt.JWTError on failure."""
-    claims = _verify_one(token, audience=audience)
+    claims = _verify_one(token, audience=audience, check_expiry=check_expiry)
     if "act" not in claims:
         raise jwt.InvalidTokenError("act claim missing — on-behalf-of token required")
     return claims
@@ -153,6 +195,11 @@ def exchange(
     """RFC 8693 token exchange. Returns a new JWT signed by identity-issuer."""
     subject_claims = _verify_one(subject_token, audience=None)
     actor_claims = _verify_one(actor_token, audience=None)
+
+    # Refuse if actor token carries person claims
+    for key in _PERSON_CLAIM_KEYS:
+        if key in actor_claims:
+            raise ValueError(f"actor token must not carry person claim {key!r}")
 
     # subject_token.aud must equal actor_token.sub
     subject_aud = subject_claims.get("aud")
@@ -188,6 +235,9 @@ def exchange(
     if subject_claims.get("act"):
         act_claim["act"] = subject_claims["act"]
 
+    # Copy person claims from subject token unchanged
+    person_claims = {k: subject_claims[k] for k in _PERSON_CLAIM_KEYS if k in subject_claims}
+
     payload = {
         "iss": USER_ISSUER,
         "sub": subject_claims["sub"],
@@ -196,6 +246,7 @@ def exchange(
         "iat": now_ts,
         "exp": exp,
         "act": act_claim,
+        **person_claims,
     }
     return _encode(payload, _USER_KID)
 
