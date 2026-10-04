@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the approach-3 generation pipeline for generation N.
 # Usage: bash arms/approach3/generate.sh <N>
-#   N = 0: pilot run into ~/gvg-arm3/gen-0; never imported.
+#   N = 0: pilot run into ~/checkpoint-gen/run-0; never imported.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -17,10 +17,10 @@ if ! [[ "$GEN_N" =~ ^[0-9]+$ ]]; then
 fi
 
 if [[ "$GEN_N" == "0" ]]; then
-    echo "NOTE: gen-0 is a pilot run and will not be imported." >&2
+    echo "NOTE: run-0 is a pilot run and will not be imported." >&2
 fi
 
-KIT=~/gvg-arm3/gen-$GEN_N
+KIT=~/checkpoint-gen/run-$GEN_N
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MODEL="global.anthropic.claude-sonnet-4-6"
@@ -127,7 +127,7 @@ specify init . --integration claude --force --non-interactive
 mkdir -p logs
 
 # --- step 3: run the five SDD skills ---
-TOOLS_BASE="Read(./**),Write(./checkpoint.py),Edit(./checkpoint.py),Bash(.specify/scripts/bash/*),Bash(bash .specify/scripts/bash/*),Bash(git *),Bash(mkdir -p *),Bash(uv run *)"
+TOOLS_BASE="Read(./**),Write(./checkpoint.py),Write(./specs/**),Write(./.specify/memory/**),Edit(./checkpoint.py),Edit(./specs/**),Edit(./.specify/memory/**),Bash(.specify/scripts/bash/*),Bash(bash .specify/scripts/bash/*),Bash(git init),Bash(git add *),Bash(git commit *),Bash(git checkout -b *),Bash(mkdir -p *),Bash(uv run pytest*)"
 
 run_step() {
     local name="$1"

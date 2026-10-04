@@ -9,6 +9,7 @@ import importlib.util
 import inspect
 import json
 import pathlib
+import re
 import textwrap
 
 import pytest
@@ -532,7 +533,7 @@ def test_import_gen_writes_manifest_with_hashes(tmp_path, monkeypatch):
     """import_gen() copies the generated checkpoint and writes manifest.json with sha256 values."""
     import arms.approach3.import_gen as _ig
 
-    kit_root = tmp_path / "gvg-arm3" / "gen-1"
+    kit_root = tmp_path / "checkpoint-gen" / "run-1"
     kit_root.mkdir(parents=True)
     (kit_root / "checkpoint.py").write_text("class PolicyHook: pass\n", encoding="utf-8")
     (kit_root / "metadata.json").write_text('{"gen": 1}\n', encoding="utf-8")
@@ -558,7 +559,7 @@ def test_import_gen_records_seal_result(tmp_path, monkeypatch):
     """import_gen() records the seal check result in manifest.json."""
     import arms.approach3.import_gen as _ig
 
-    kit_root = tmp_path / "gvg-arm3" / "gen-2"
+    kit_root = tmp_path / "checkpoint-gen" / "run-2"
     kit_root.mkdir(parents=True)
     (kit_root / "checkpoint.py").write_text("class PolicyHook: pass\n", encoding="utf-8")
     (kit_root / "metadata.json").write_text('{"gen": 2}\n', encoding="utf-8")
@@ -839,4 +840,195 @@ def test_acceptance_stub_checkpoint_hardcoding_fails_runtime_check(tmp_path):
     )
     assert result is False, (
         "verify_reads_config_at_runtime must return False for a stub that hard-codes tools"
+    )
+
+
+# ---------------------------------------------------------------------------
+# G1 – G4: approved round-2 changes (neutral naming, specific allowedTools)
+# ---------------------------------------------------------------------------
+
+_GENERATE_SH  = _APPROACH3 / "generate.sh"
+_MAKE_KIT_SRC = _APPROACH3 / "make_kit.py"
+_IMPORT_GEN_SRC = _APPROACH3 / "import_gen.py"
+
+
+# G1: Write and Edit must be allowed for ./specs/** and ./.specify/memory/**
+
+def test_g1_generate_sh_allows_writes_to_specs_dir():
+    """G1: generate.sh allowed-tools must permit Write inside ./specs/."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Write\(\.\/specs\/", text), (
+        "generate.sh must include Write(./specs/**) in its allowedTools (G1)"
+    )
+
+
+def test_g1_generate_sh_allows_edits_to_specs_dir():
+    """G1: generate.sh allowed-tools must permit Edit inside ./specs/."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Edit\(\.\/specs\/", text), (
+        "generate.sh must include Edit(./specs/**) in its allowedTools (G1)"
+    )
+
+
+def test_g1_generate_sh_allows_writes_to_specify_memory_dir():
+    """G1: generate.sh allowed-tools must permit Write inside ./.specify/memory/."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Write\(\.\/\.specify\/memory\/", text), (
+        "generate.sh must include Write(./.specify/memory/**) in its allowedTools (G1)"
+    )
+
+
+def test_g1_generate_sh_allows_edits_to_specify_memory_dir():
+    """G1: generate.sh allowed-tools must permit Edit inside ./.specify/memory/."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Edit\(\.\/\.specify\/memory\/", text), (
+        "generate.sh must include Edit(./.specify/memory/**) in its allowedTools (G1)"
+    )
+
+
+# G2: Replace the broad Bash(uv run *) with the specific Bash(uv run pytest*)
+
+def test_g2_generate_sh_has_no_broad_uv_run_wildcard():
+    """G2: generate.sh must not contain the broad Bash(uv run *)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert "Bash(uv run *)" not in text, (
+        "generate.sh must replace Bash(uv run *) with Bash(uv run pytest*) (G2)"
+    )
+
+
+def test_g2_generate_sh_has_specific_uv_run_pytest():
+    """G2: generate.sh must contain Bash(uv run pytest*) (or similar) in its allowed-tools."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert "Bash(uv run pytest" in text, (
+        "generate.sh must include Bash(uv run pytest*) in its allowedTools (G2)"
+    )
+
+
+# G3: Remove the broad Bash(git *) wildcard
+
+def test_g3_generate_sh_has_no_broad_git_wildcard():
+    """G3: generate.sh must not contain the broad Bash(git *) wildcard."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert "Bash(git *)" not in text, (
+        "generate.sh must not use Bash(git *); allow only specific git commands (G3)"
+    )
+
+
+# G4: Neutral kit folder path; neutral pyproject name; forbidden-word check covers gvg/arm3
+
+def test_g4_generate_sh_kit_folder_has_no_gvg():
+    """G4: generate.sh KIT= path must not contain 'gvg'."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.strip().startswith("KIT="):
+            assert "gvg" not in line.lower(), (
+                f"generate.sh KIT= path must not contain 'gvg' (G4): {line.strip()!r}"
+            )
+            return
+    pytest.fail("generate.sh has no KIT= line")
+
+
+def test_g4_generate_sh_kit_folder_has_no_arm3():
+    """G4: generate.sh KIT= path must not contain 'arm3'."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.strip().startswith("KIT="):
+            assert "arm3" not in line.lower(), (
+                f"generate.sh KIT= path must not contain 'arm3' (G4): {line.strip()!r}"
+            )
+            return
+    pytest.fail("generate.sh has no KIT= line")
+
+
+def test_g4_make_kit_build_path_has_no_gvg_arm3():
+    """G4: make_kit.py must not contain 'gvg-arm3' as a kit folder component."""
+    text = _MAKE_KIT_SRC.read_text(encoding="utf-8")
+    assert "gvg-arm3" not in text, (
+        "make_kit.py must not use 'gvg-arm3' as the kit folder name (G4)"
+    )
+
+
+def test_g4_import_gen_path_has_no_gvg_arm3():
+    """G4: import_gen.py must not contain 'gvg-arm3' as a kit folder component."""
+    text = _IMPORT_GEN_SRC.read_text(encoding="utf-8")
+    assert "gvg-arm3" not in text, (
+        "import_gen.py must not use 'gvg-arm3' as the kit folder name (G4)"
+    )
+
+
+def test_g4_kit_pyproject_name_is_neutral():
+    """G4: kit pyproject.toml template must not contain 'gvg' or 'arm3'."""
+    from arms.approach3.make_kit import _PYPROJECT
+
+    assert "gvg" not in _PYPROJECT.lower(), (
+        "kit pyproject.toml template must not contain 'gvg' (G4)"
+    )
+    assert "arm3" not in _PYPROJECT.lower(), (
+        "kit pyproject.toml template must not contain 'arm3' (G4)"
+    )
+
+
+def test_g4_forbidden_words_includes_gvg():
+    """G4: FORBIDDEN_WORDS must include 'gvg'."""
+    from arms.approach3.make_kit import FORBIDDEN_WORDS
+
+    assert "gvg" in FORBIDDEN_WORDS, "FORBIDDEN_WORDS must include 'gvg' (G4)"
+
+
+def test_g4_forbidden_words_includes_arm3():
+    """G4: FORBIDDEN_WORDS must include 'arm3'."""
+    from arms.approach3.make_kit import FORBIDDEN_WORDS
+
+    assert "arm3" in FORBIDDEN_WORDS, "FORBIDDEN_WORDS must include 'arm3' (G4)"
+
+
+def test_g4_forbidden_words_includes_study_project_name():
+    """G4: FORBIDDEN_WORDS must include the study project name 'guides-vs-gates'."""
+    from arms.approach3.make_kit import FORBIDDEN_WORDS
+
+    assert "guides-vs-gates" in FORBIDDEN_WORDS, (
+        "FORBIDDEN_WORDS must include 'guides-vs-gates' (the study project name) (G4)"
+    )
+
+
+def test_g4_forbidden_check_rejects_planted_gvg(tmp_path):
+    """G4: _check_forbidden must flag a file containing 'gvg'."""
+    from arms.approach3.make_kit import _check_forbidden
+
+    (tmp_path / "planted.py").write_text("# this file mentions gvg\n", encoding="utf-8")
+    hits = _check_forbidden(tmp_path)
+    assert hits, "_check_forbidden did not detect 'gvg' in a planted file (G4)"
+    assert any("gvg" in h for h in hits), f"hits did not mention 'gvg': {hits}"
+
+
+def test_g4_forbidden_check_rejects_planted_arm3(tmp_path):
+    """G4: _check_forbidden must flag a file containing 'arm3'."""
+    from arms.approach3.make_kit import _check_forbidden
+
+    (tmp_path / "planted.py").write_text("# this file mentions arm3\n", encoding="utf-8")
+    hits = _check_forbidden(tmp_path)
+    assert hits, "_check_forbidden did not detect 'arm3' in a planted file (G4)"
+    assert any("arm3" in h for h in hits), f"hits did not mention 'arm3': {hits}"
+
+
+def test_g4_forbidden_words_includes_repo_name():
+    """G4: FORBIDDEN_WORDS must include this repository's own name 'agent-authz-placement'."""
+    from arms.approach3.make_kit import FORBIDDEN_WORDS
+
+    assert "agent-authz-placement" in FORBIDDEN_WORDS, (
+        "FORBIDDEN_WORDS must include 'agent-authz-placement' (G4)"
+    )
+
+
+def test_g4_forbidden_check_rejects_planted_repo_name(tmp_path):
+    """G4: _check_forbidden must flag a file containing 'agent-authz-placement'."""
+    from arms.approach3.make_kit import _check_forbidden
+
+    (tmp_path / "planted.py").write_text(
+        "# this file mentions agent-authz-placement\n", encoding="utf-8"
+    )
+    hits = _check_forbidden(tmp_path)
+    assert hits, "_check_forbidden did not detect 'agent-authz-placement' in a planted file (G4)"
+    assert any("agent-authz-placement" in h for h in hits), (
+        f"hits did not mention 'agent-authz-placement': {hits}"
     )

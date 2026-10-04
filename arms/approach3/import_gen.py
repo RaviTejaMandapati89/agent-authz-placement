@@ -4,7 +4,7 @@ Import a completed generation into arms/approach3/gen-N/.
 
 Usage: python arms/approach3/import_gen.py <N> [--replace]
 
-Copies from ~/gvg-arm3/gen-N/:
+Copies from ~/checkpoint-gen/run-N/:
   - checkpoint.py      (the generated hook module)
   - metadata.json      (generation metadata)
   - .specify/          (Spec Kit artefacts)
@@ -183,7 +183,7 @@ def import_gen(n: int, *, replace: bool = False) -> None:
         print("N = 0 is the pilot generation and is never imported.")
         sys.exit(1)
 
-    kit_root = pathlib.Path.home() / "gvg-arm3" / f"gen-{n}"
+    kit_root = pathlib.Path.home() / "checkpoint-gen" / f"run-{n}"
     gen_dst  = _APPROACH3 / f"gen-{n}"
 
     if not kit_root.exists():

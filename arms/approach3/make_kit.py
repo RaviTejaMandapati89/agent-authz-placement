@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Build an approach-3 generation kit.
+Build a generation kit for the checkpoint pipeline.
 
 Usage: python arms/approach3/make_kit.py <N>
 
-Creates ~/gvg-arm3/gen-<N>/ containing:
+Creates ~/checkpoint-gen/run-<N>/ containing:
   - domain/       (allow-listed files only, including scopes.py)
   - config/agents/ (the three agent config YAML files)
   - spec_input.md
@@ -36,6 +36,10 @@ FORBIDDEN_WORDS = [
     "c_hook",
     "d_boundary",
     "PREREG",
+    "gvg",
+    "arm3",
+    "guides-vs-gates",
+    "agent-authz-placement",
 ]
 
 # Regex that matches "approach" followed by an optional space or underscore
@@ -56,7 +60,7 @@ _DOMAIN_ALLOW = frozenset({
 
 _PYPROJECT = """\
 [project]
-name = "gvg-arm3-gen"
+name = "checkpoint-gen"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -231,7 +235,7 @@ def verify_reads_config_at_runtime(
 
 
 def build(gen_n: int) -> pathlib.Path:
-    kit_root = pathlib.Path.home() / "gvg-arm3" / f"gen-{gen_n}"
+    kit_root = pathlib.Path.home() / "checkpoint-gen" / f"run-{gen_n}"
 
     if kit_root.exists():
         print(f"Kit already exists at {kit_root}")
@@ -245,7 +249,7 @@ def build(gen_n: int) -> pathlib.Path:
         shutil.rmtree(kit_root, ignore_errors=True)
         sys.exit(1)
 
-    print(f"Kit built: {kit_root}")
+    print(f"Kit built at: {kit_root}")
     files = sorted(kit_root.rglob("*"))
     total = sum(1 for f in files if f.is_file())
     print(f"{total} files written")
