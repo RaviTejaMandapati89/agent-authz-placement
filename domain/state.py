@@ -2,6 +2,7 @@ import copy
 import datetime
 from datetime import timezone
 
+from domain import simclock
 from domain.fixtures import (
     APPROVED_VENDORS,
     DELEGATIONS,
@@ -42,3 +43,4 @@ state = State()
 
 def reset() -> None:
     state.__init__()
+    simclock.reset()

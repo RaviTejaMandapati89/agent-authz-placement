@@ -61,11 +61,13 @@ class PolicyHook(HookProvider):
         limit_from_config = self._config.get("expense_limit")
         self._limit: int | None = limit_override if limit_override is not None else limit_from_config
         self._http = http_client
+        self._last_dir_sim_time: float | None = None
 
     def register_hooks(self, registry: HookRegistry) -> None:
         registry.add_callback(BeforeToolCallEvent, self._before_tool_call)
 
     def _before_tool_call(self, event: BeforeToolCallEvent) -> None:
+        self._last_dir_sim_time = None
         tool_name = event.tool_use["name"]
         arguments = dict(event.tool_use.get("input", {}))
         try:
@@ -164,15 +166,19 @@ class PolicyHook(HookProvider):
     def _check_book_travel(self, arguments: dict) -> tuple[str, str | None, str]:
         traveller = canonicalise(arguments.get("traveller", ""))
 
-        # No P4 check when booking for yourself
         if traveller == self._user:
             return "allow", None, "permitted"
 
-        # P4: needs active, unexpired delegation covering travel
-        delegations = self._dir_get("/directory/delegations")
-        if delegations is None:
+        dir_response = self._dir_get("/directory/delegations")
+        if dir_response is None:
             return "deny", "P4", "delegation directory unavailable"
-        now = datetime.datetime.now(datetime.timezone.utc)
+
+        if isinstance(dir_response, dict):
+            delegations = dir_response.get("delegations", [])
+            self._last_dir_sim_time = dir_response.get("sim_time")
+        else:
+            delegations = dir_response
+
         for d in delegations:
             if (
                 d.get("delegator") == traveller
@@ -180,15 +186,7 @@ class PolicyHook(HookProvider):
                 and d.get("active") is True
                 and "travel" in d.get("scope", [])
             ):
-                expires_raw = d.get("expires", "")
-                try:
-                    expires = datetime.datetime.fromisoformat(
-                        expires_raw[:-1] + "+00:00" if expires_raw.endswith("Z") else expires_raw
-                    )
-                    if expires > now:
-                        return "allow", None, "active delegation"
-                except ValueError:
-                    pass
+                return "allow", None, "active delegation"
 
         return "deny", "P4", f"no active travel delegation from {traveller!r} to {self._user!r}"
 
@@ -233,6 +231,7 @@ class PolicyHook(HookProvider):
     ) -> None:
         entry = {
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "sim_time": self._last_dir_sim_time,
             "run_id": self._run_id,
             "user": self._user,
             "agent": self._agent_name,

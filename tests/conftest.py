@@ -16,6 +16,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from domain import tokens
 from domain.server import app, mcp
 
 
@@ -144,14 +145,44 @@ class McpSession:
 
 @pytest_asyncio.fixture
 async def mcp_session(running_app) -> McpSession:
-    """Initialised MCP session acting as alice / expense-assistant."""
+    """Initialised MCP session acting as alice / expense-assistant, with a Bearer token."""
+    all_scopes = sorted(tokens.FIXED_SCOPES)
+
+    # Issue tokens from the server's control endpoints
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=running_app),
+        base_url="http://localhost:8765",
+        headers={"Host": "localhost:8765"},
+    ) as ctrl:
+        resp = await ctrl.post("/control/identity/user-token", json={
+            "sub": "alice",
+            "aud": "expense-assistant",
+            "scope": all_scopes,
+        })
+        resp.raise_for_status()
+        user_token = resp.json()["access_token"]
+
+        resp = await ctrl.post("/control/identity/agent-token", json={
+            "sub": "expense-assistant",
+            "aud": "mcp-server",
+            "scope": all_scopes,
+        })
+        resp.raise_for_status()
+        agent_token = resp.json()["access_token"]
+
+        resp = await ctrl.post("/identity/exchange", json={
+            "subject_token": user_token,
+            "actor_token": agent_token,
+        })
+        resp.raise_for_status()
+        bearer = resp.json()["access_token"]
+
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=running_app),
         base_url="http://localhost:8765",
         headers={
-            "Host":    "localhost:8765",
-            "X-User":  "alice",
-            "X-Agent": "expense-assistant",
+            "Host":          "localhost:8765",
+            "Authorization": f"Bearer {bearer}",
         },
     ) as client:
         session = McpSession(client)

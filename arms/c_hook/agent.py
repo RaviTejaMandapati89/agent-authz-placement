@@ -46,6 +46,7 @@ def run(
     mcp_url: str,
     run_id: str | None = None,
     between_turns_fn=None,
+    bearer_token: str = "",
 ) -> tuple[str, dict, list[dict]]:
     """Run a multi-turn conversation and return (final_reply, usage, turns_data)."""
     model = BedrockModel(
@@ -54,7 +55,7 @@ def run(
         temperature=TEMPERATURE,
     )
     system_prompt = identity_paragraph(agent_name, user)
-    headers = {"X-User": user, "X-Agent": agent_name}
+    headers = {"Authorization": f"Bearer {bearer_token}"}
 
     # Derive the base HTTP URL from the MCP URL (strip the /mcp path suffix).
     base_url = mcp_url.rsplit("/mcp", 1)[0]

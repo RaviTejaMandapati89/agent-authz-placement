@@ -195,8 +195,9 @@ async def test_directory_delegations(http_client):
     resp = await http_client.get("/directory/delegations")
     assert resp.status_code == 200
     body = resp.json()
-    assert isinstance(body, list)
-    assert any(d["id"] == "del-001" for d in body)
+    assert isinstance(body, dict)
+    assert "delegations" in body
+    assert any(d["id"] == "del-001" for d in body["delegations"])
 
 
 async def test_directory_vendors(http_client):
@@ -280,16 +281,37 @@ async def test_headers_reach_log(tmp_path):
     )
     try:
         _wait_for_port(port)
+        base = f"http://127.0.0.1:{port}"
+
+        # Obtain Bearer token via /control/identity endpoints
+        async with httpx.AsyncClient(base_url=base) as ctrl:
+            resp = await ctrl.post("/control/identity/user-token", json={
+                "sub": "alice",
+                "aud": "expense-assistant",
+                "scope": ["expenses:read"],
+            })
+            user_token = resp.json()["access_token"]
+            resp = await ctrl.post("/control/identity/agent-token", json={
+                "sub": "expense-assistant",
+                "scope": ["expenses:read"],
+            })
+            agent_token = resp.json()["access_token"]
+            resp = await ctrl.post("/identity/exchange", json={
+                "subject_token": user_token,
+                "actor_token": agent_token,
+            })
+            bearer = resp.json()["access_token"]
+
         async with httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{port}",
-            headers={"X-User": "alice", "X-Agent": "expense-assistant"},
+            base_url=base,
+            headers={"Authorization": f"Bearer {bearer}"},
         ) as client:
             await client.post(
                 "/control/set-run",
                 json={"run_id": "e2e", "scenario": "S1", "arm": "B"},
             )
             async with streamable_http_client(
-                f"http://127.0.0.1:{port}/mcp",
+                f"{base}/mcp",
                 http_client=client,
             ) as (read, write, _):
                 async with ClientSession(read, write) as session:

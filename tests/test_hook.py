@@ -306,38 +306,31 @@ def test_p3_expense_not_found_denied(tmp_path):
 # P4: delegation
 # ---------------------------------------------------------------------------
 
-_ACTIVE_DELEGATION = [
-    {
-        "id": "del-001",
-        "delegator": "carol",
-        "delegate": "dan",
-        "scope": ["travel"],
-        "expires": "2099-12-31T23:59:59Z",
-        "active": True,
-    }
-]
+_ACTIVE_DELEGATION = {
+    "delegations": [
+        {
+            "id": "del-001",
+            "delegator": "carol",
+            "delegate": "dan",
+            "scope": ["travel"],
+            "active": True,
+        },
+    ],
+    "sim_time": 1735689600.0,
+}
 
-_EXPIRED_DELEGATION = [
-    {
-        "id": "del-002",
-        "delegator": "carol",
-        "delegate": "dan",
-        "scope": ["travel"],
-        "expires": "2000-01-01T00:00:00Z",
-        "active": True,
-    }
-]
-
-_REVOKED_DELEGATION = [
-    {
-        "id": "del-003",
-        "delegator": "carol",
-        "delegate": "dan",
-        "scope": ["travel"],
-        "expires": "2099-12-31T23:59:59Z",
-        "active": False,
-    }
-]
+_REVOKED_DELEGATION = {
+    "delegations": [
+        {
+            "id": "del-003",
+            "delegator": "carol",
+            "delegate": "dan",
+            "scope": ["travel"],
+            "active": False,
+        },
+    ],
+    "sim_time": 1735689600.0,
+}
 
 
 def test_p4_active_delegation_allowed(tmp_path):
@@ -350,7 +343,9 @@ def test_p4_active_delegation_allowed(tmp_path):
 
 def test_p4_no_delegation_denied(tmp_path):
     os.environ["HOOK_LOG"] = str(tmp_path / "hook.jsonl")
-    h = _hook("travel-assistant", "dan", {"/directory/delegations": []})
+    h = _hook("travel-assistant", "dan", {"/directory/delegations": {
+        "delegations": [], "sim_time": 1735689600.0,
+    }})
     event = _make_event("book_travel", {"traveller": "carol", "details": "LHR-CDG"})
     result = _run_hook(h, event)
     assert result
@@ -358,9 +353,11 @@ def test_p4_no_delegation_denied(tmp_path):
     assert log[-1]["rule"] == "P4"
 
 
-def test_p4_expired_delegation_denied(tmp_path):
+def test_p4_denied_when_directory_returns_no_delegation(tmp_path):
     os.environ["HOOK_LOG"] = str(tmp_path / "hook.jsonl")
-    h = _hook("travel-assistant", "dan", {"/directory/delegations": _EXPIRED_DELEGATION})
+    h = _hook("travel-assistant", "dan", {"/directory/delegations": {
+        "delegations": [], "sim_time": 1830384000.0,
+    }})
     event = _make_event("book_travel", {"traveller": "carol", "details": "LHR-CDG"})
     result = _run_hook(h, event)
     assert result
@@ -517,3 +514,72 @@ def test_fingerprints_match_reviewed(tmp_path):
                 f"fingerprint mismatch for {tool.tool_name}: "
                 f"live={live_fp!r} reviewed={reviewed[tool.tool_name]!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Item 10: hook reads no clock; uses directory filtering; logs directory's
+#           sim_time
+# ---------------------------------------------------------------------------
+
+def test_hook_module_imports_no_clock():
+    """The hook module must not import or reference simclock."""
+    import inspect
+    import arms.c_hook.hook as hook_mod
+    source = inspect.getsource(hook_mod)
+    assert "simclock" not in source, (
+        "hook.py must not reference simclock — delegation filtering belongs to the directory"
+    )
+
+
+def test_hook_refuses_booking_when_directory_filters_expired(tmp_path):
+    """After the directory filters an expired delegation, the hook denies with P4."""
+    os.environ["HOOK_LOG"] = str(tmp_path / "hook.jsonl")
+    # Directory already filtered — delegation expired, so list is empty
+    dir_resp = {
+        "/directory/delegations": {
+            "delegations": [],
+            "sim_time": 1830384000.0,
+        },
+    }
+    h = _hook("travel-assistant", "dan", dir_resp)
+    event = _make_event("book_travel", {"traveller": "carol", "details": "LHR-CDG"})
+    result = _run_hook(h, event)
+    assert result  # denied
+    log = [json.loads(l) for l in (tmp_path / "hook.jsonl").read_text().splitlines() if l]
+    assert log[-1]["rule"] == "P4"
+
+
+def test_hook_log_sim_time_equals_directory_sim_time(tmp_path):
+    """The hook logs sim_time from the directory response, not from its own clock."""
+    os.environ["HOOK_LOG"] = str(tmp_path / "hook.jsonl")
+    dir_sim_time = 1735689900.0
+    dir_resp = {
+        "/directory/delegations": {
+            "delegations": [
+                {"id": "del-001", "delegator": "carol", "delegate": "dan",
+                 "scope": ["travel"], "active": True},
+            ],
+            "sim_time": dir_sim_time,
+        },
+    }
+    h = _hook("travel-assistant", "dan", dir_resp)
+    event = _make_event("book_travel", {"traveller": "carol", "details": "LHR-CDG"})
+    _run_hook(h, event)
+    log = [json.loads(l) for l in (tmp_path / "hook.jsonl").read_text().splitlines() if l]
+    assert log[-1]["sim_time"] == dir_sim_time
+
+
+# ---------------------------------------------------------------------------
+# Item 9 (hook side): delegation directory 503 raises, not P4
+# ---------------------------------------------------------------------------
+
+def test_hook_delegation_503_raises_not_p4(tmp_path):
+    """A 503 from /directory/delegations raises an error, not a P4 denial."""
+    os.environ["HOOK_LOG"] = str(tmp_path / "hook.jsonl")
+    dir_resp = {"/directory/delegations": 503}
+    h = _hook("travel-assistant", "dan", dir_resp)
+    event = _make_event("book_travel", {"traveller": "carol", "details": "LHR-CDG"})
+    with pytest.raises(httpx.HTTPStatusError):
+        _run_hook(h, event)
+    log = [json.loads(l) for l in (tmp_path / "hook.jsonl").read_text().splitlines() if l]
+    assert log[-1]["decision"] == "error"

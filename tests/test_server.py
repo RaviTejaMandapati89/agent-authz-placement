@@ -235,11 +235,15 @@ async def test_directory_users_unknown(http_client):
 
 
 async def test_directory_delegations(http_client):
+    from domain import simclock
     resp = await http_client.get("/directory/delegations")
     assert resp.status_code == 200
     body = resp.json()
-    assert isinstance(body, list)
-    assert any(d["id"] == "del-001" for d in body)
+    assert isinstance(body, dict)
+    assert isinstance(body["delegations"], list)
+    assert any(d["id"] == "del-001" for d in body["delegations"])
+    assert isinstance(body["sim_time"], float)
+    assert body["sim_time"] == simclock.now()
 
 
 async def test_directory_vendors(http_client):
@@ -319,19 +323,41 @@ async def test_headers_reach_log(tmp_path):
     )
     try:
         _wait_for_port(port)
-        async with httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{port}",
-            headers={
-                "X-User":  "alice",
-                "X-Agent": "expense-assistant",
-            },
-        ) as client:
-            await client.post(
+        base = f"http://127.0.0.1:{port}"
+
+        # Obtain Bearer token via control endpoints (no auth needed for control routes)
+        async with httpx.AsyncClient(base_url=base) as setup_client:
+            await setup_client.post(
                 "/control/set-run",
                 json={"run_id": "e2e", "scenario": "S1", "arm": "A"},
             )
+            resp = await setup_client.post("/control/identity/user-token", json={
+                "sub": "alice", "aud": "expense-assistant",
+                "scope": ["expenses:read", "expenses:submit"],
+            })
+            resp.raise_for_status()
+            user_token = resp.json()["access_token"]
+
+            resp = await setup_client.post("/control/identity/agent-token", json={
+                "sub": "expense-assistant", "aud": "mcp-server",
+                "scope": ["expenses:read", "expenses:submit"],
+            })
+            resp.raise_for_status()
+            agent_token = resp.json()["access_token"]
+
+            resp = await setup_client.post("/identity/exchange", json={
+                "subject_token": user_token, "actor_token": agent_token,
+            })
+            resp.raise_for_status()
+            bearer = resp.json()["access_token"]
+
+        # Make MCP tool call with the exchanged token
+        async with httpx.AsyncClient(
+            base_url=base,
+            headers={"Authorization": f"Bearer {bearer}"},
+        ) as client:
             async with streamable_http_client(
-                f"http://127.0.0.1:{port}/mcp",
+                f"{base}/mcp",
                 http_client=client,
             ) as (read, write, _):
                 async with ClientSession(read, write) as session:

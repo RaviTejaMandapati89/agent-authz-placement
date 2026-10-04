@@ -32,6 +32,12 @@ _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _SCENARIOS_DIR = _REPO_ROOT / "scenarios"
 _B_SPEC_DIR = _REPO_ROOT / "arms" / "b_spec"
 
+_AGENT_SCOPES: dict[str, list[str]] = {
+    "expense-assistant": ["expenses:read", "expenses:submit", "expenses:approve"],
+    "travel-assistant": ["travel:book"],
+    "payments-agent": ["payments:pay"],
+}
+
 _ARM_MODULES: dict[str, object] = {}
 
 
@@ -412,6 +418,39 @@ def run_one(
             ).raise_for_status()
         arm_mod.apply_policy_change(policy_change)
 
+    # Obtain identity tokens for the agent
+    agent_name = scenario["agent"]
+    user = scenario["user"]
+    agent_scopes = _AGENT_SCOPES.get(agent_name, [])
+    bearer_token = ""
+    bearer_claims: dict | None = None
+    try:
+        r = httpx.post(f"{base_url}/control/identity/user-token", json={
+            "sub": user, "aud": agent_name, "scope": agent_scopes,
+        })
+        r.raise_for_status()
+        user_token = r.json()["access_token"]
+
+        r = httpx.post(f"{base_url}/control/identity/agent-token", json={
+            "sub": agent_name, "scope": agent_scopes,
+        })
+        r.raise_for_status()
+        agent_token = r.json()["access_token"]
+
+        r = httpx.post(f"{base_url}/identity/exchange", json={
+            "subject_token": user_token, "actor_token": agent_token,
+        })
+        r.raise_for_status()
+        bearer_token = r.json()["access_token"]
+
+        try:
+            import jwt as _jwt
+            bearer_claims = _jwt.decode(bearer_token, options={"verify_signature": False})
+        except Exception:
+            bearer_claims = None
+    except Exception:
+        pass
+
     start_ts = time.monotonic()
     final_reply = ""
     input_tokens = None
@@ -454,12 +493,13 @@ def run_one(
                     httpx.post(f"{base_url}/control/pdp-down", json={"down": True}).raise_for_status()
 
             reply, usage, turns_data = arm_mod.run(
-                agent_name=scenario["agent"],
-                user=scenario["user"],
+                agent_name=agent_name,
+                user=user,
                 turns=turns,
                 mcp_url=mcp_url,
                 run_id=run_id,
                 between_turns_fn=do_between_turns if between_turn_steps else None,
+                bearer_token=bearer_token,
             )
             final_reply = reply
             input_tokens = usage.get("input_tokens")
@@ -544,6 +584,7 @@ def run_one(
         "ledger": ledger,
         "transcript": transcript,
         "hook_decisions_count": hook_decisions_count,
+        "identity_claims": bearer_claims,
     }
     with runs_out.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")

@@ -10,6 +10,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from domain import simclock, tokens
 from domain.identity import canonicalise
 from domain.state import reset, state
 
@@ -45,6 +46,7 @@ def _decision_line(call_id: str, caller: dict, tool_name: str, arguments: dict, 
             "type":      "decision",
             "call_id":   call_id,
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "sim_time":  simclock.now(),
             "run_id":    state.run_id,
             "scenario":  state.scenario,
             "arm":       state.arm,
@@ -65,6 +67,7 @@ def _outcome_line(call_id: str, *, executed: bool, error: str | None) -> None:
             "type":      "outcome",
             "call_id":   call_id,
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "sim_time":  simclock.now(),
             "run_id":    state.run_id,
             "scenario":  state.scenario,
             "arm":       state.arm,
@@ -81,13 +84,29 @@ async def _run_tool(
     ctx: Context,
     tool_name: str,
     arguments: dict,
-    action_fn: Callable[[], Any],
+    action_fn: Callable[[dict], Any],
 ) -> Any:
-    caller = {
-        "user":  ctx.request_context.request.headers.get("x-user",  ""),
-        "agent": ctx.request_context.request.headers.get("x-agent", ""),
-    }
     call_id = str(uuid.uuid4())
+    caller: dict = {"user": None, "agent": None}
+
+    # Verify Bearer token; identity comes only from the token
+    auth = ctx.request_context.request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        decision = {"decision": "deny", "rule": "IDENTITY", "reason": "missing Bearer token"}
+        _decision_line(call_id, caller, tool_name, arguments, decision)
+        _outcome_line(call_id, executed=False, error="missing Bearer token")
+        raise PermissionError("missing Bearer token")
+
+    try:
+        claims = tokens.verify_bearer(auth[7:])
+    except Exception as exc:
+        reason = str(exc)
+        decision = {"decision": "deny", "rule": "IDENTITY", "reason": reason}
+        _decision_line(call_id, caller, tool_name, arguments, decision)
+        _outcome_line(call_id, executed=False, error=reason)
+        raise PermissionError(reason) from exc
+
+    caller = tokens.claims_to_caller(claims)
 
     try:
         decision = authorise(caller, tool_name, arguments)
@@ -104,7 +123,7 @@ async def _run_tool(
         raise PermissionError(decision["reason"])
 
     try:
-        result = action_fn()
+        result = action_fn(caller)
     except Exception as exc:
         _outcome_line(call_id, executed=False, error=str(exc))
         raise
@@ -136,7 +155,7 @@ async def read_receipt(receipt_id: str, ctx: Context) -> dict:
     """Read a receipt by ID."""
     return await _run_tool(
         ctx, "read_receipt", {"receipt_id": receipt_id},
-        lambda: _do_read_receipt(receipt_id),
+        lambda _caller: _do_read_receipt(receipt_id),
     )
 
 
@@ -157,7 +176,7 @@ async def submit_expense(
     }
     return await _run_tool(
         ctx, "submit_expense", args,
-        lambda: _do_submit_expense(claimant, amount, description, receipt_id, approval_ref),
+        lambda _caller: _do_submit_expense(claimant, amount, description, receipt_id, approval_ref),
     )
 
 
@@ -166,10 +185,7 @@ async def approve_expense(expense_id: str, ctx: Context) -> dict:
     """Approve an expense."""
     return await _run_tool(
         ctx, "approve_expense", {"expense_id": expense_id},
-        lambda: _do_approve_expense(
-            expense_id,
-            approver=ctx.request_context.request.headers.get("x-user", ""),
-        ),
+        lambda caller: _do_approve_expense(expense_id, approver=caller["user"]),
     )
 
 
@@ -179,7 +195,7 @@ async def book_travel(traveller: str, details: str, ctx: Context) -> dict:
     traveller = canonicalise(traveller)
     return await _run_tool(
         ctx, "book_travel", {"traveller": traveller, "details": details},
-        lambda: _do_book_travel(traveller, details),
+        lambda _caller: _do_book_travel(traveller, details),
     )
 
 
@@ -189,7 +205,7 @@ async def pay_vendor(vendor: str, amount: float, reference: str, ctx: Context) -
     vendor = canonicalise(vendor)
     return await _run_tool(
         ctx, "pay_vendor", {"vendor": vendor, "amount": amount, "reference": reference},
-        lambda: _do_pay_vendor(vendor, amount, reference),
+        lambda _caller: _do_pay_vendor(vendor, amount, reference),
     )
 
 
@@ -273,13 +289,27 @@ async def _ctrl_reset(request: Request) -> JSONResponse:
         mcp.remove_tool("export_all_expenses")
     mcp.remove_tool("pay_vendor")
     mcp.add_tool(_pay_vendor_fn, name="pay_vendor", description=_PAY_VENDOR_DESC)
-    reset()
+    reset()  # also resets simclock via state.reset()
     # --- ARM D BEGIN ---
     if os.environ.get("ENFORCEMENT") == "cedar":
         from arms.d_boundary import pep as _pep
         _pep.reset_policy()
     # --- ARM D END ---
     return JSONResponse({"ok": True})
+
+
+@mcp.custom_route("/control/clock/set", methods=["POST"])
+async def _ctrl_clock_set(request: Request) -> JSONResponse:
+    body = await request.json()
+    simclock.set_time(float(body["ts"]))
+    return JSONResponse({"sim_time": simclock.now()})
+
+
+@mcp.custom_route("/control/clock/advance", methods=["POST"])
+async def _ctrl_clock_advance(request: Request) -> JSONResponse:
+    body = await request.json()
+    simclock.advance(float(body["seconds"]))
+    return JSONResponse({"sim_time": simclock.now()})
 
 
 @mcp.custom_route("/control/revoke-delegation", methods=["POST"])
@@ -308,7 +338,7 @@ async def _ctrl_add_tool(request: Request) -> JSONResponse:
         """Export every expense record."""
         return await _run_tool(
             ctx, "export_all_expenses", {},
-            lambda: {"expenses": list(state.expenses.values())},
+            lambda _caller: {"expenses": list(state.expenses.values())},
         )
 
     mcp.add_tool(export_all_expenses, name="export_all_expenses")
@@ -363,6 +393,56 @@ async def _ctrl_ledger(request: Request) -> JSONResponse:
     return JSONResponse(state.ledger)
 
 # ---------------------------------------------------------------------------
+# identity issuing routes (harness-only, under /control/identity/)
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/control/identity/agent-token", methods=["POST"])
+async def _ctrl_issue_agent_token(request: Request) -> JSONResponse:
+    body = await request.json()
+    tok = tokens.issue_agent_token(
+        sub=body["sub"],
+        aud=body.get("aud", tokens.USER_ISSUER),
+        scope=body.get("scope", list(tokens.FIXED_SCOPES)),
+        lifetime=int(body.get("lifetime", tokens.DEFAULT_LIFETIME)),
+    )
+    return JSONResponse({"access_token": tok})
+
+
+@mcp.custom_route("/control/identity/user-token", methods=["POST"])
+async def _ctrl_issue_user_token(request: Request) -> JSONResponse:
+    body = await request.json()
+    tok = tokens.issue_user_token(
+        sub=body["sub"],
+        aud=body["aud"],
+        scope=body.get("scope", list(tokens.FIXED_SCOPES)),
+        lifetime=int(body.get("lifetime", tokens.DEFAULT_LIFETIME)),
+    )
+    return JSONResponse({"access_token": tok})
+
+# ---------------------------------------------------------------------------
+# identity exchange (RFC 8693) and JWKS
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/identity/jwks", methods=["GET"])
+async def _identity_jwks(request: Request) -> JSONResponse:
+    return JSONResponse(tokens.jwks())
+
+
+@mcp.custom_route("/identity/exchange", methods=["POST"])
+async def _identity_exchange(request: Request) -> JSONResponse:
+    body = await request.json()
+    try:
+        tok = tokens.exchange(
+            subject_token=body["subject_token"],
+            actor_token=body["actor_token"],
+            requested_scope=body.get("scope"),
+            audience=body.get("audience"),
+        )
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"access_token": tok, "token_type": "Bearer"})
+
+# ---------------------------------------------------------------------------
 # directory read routes  (read-only; never used by arm A)
 # ---------------------------------------------------------------------------
 
@@ -389,7 +469,20 @@ async def _dir_delegations(request: Request) -> JSONResponse:
     guard = _dir_503()
     if guard:
         return guard
-    return JSONResponse(state.delegations)
+    now = simclock.now()
+    filtered = []
+    for d in state.delegations:
+        expires_raw = d.get("expires", "")
+        try:
+            if expires_raw.endswith("Z"):
+                expires_raw = expires_raw[:-1] + "+00:00"
+            expires_dt = datetime.datetime.fromisoformat(expires_raw)
+            if expires_dt.timestamp() < now:
+                continue
+        except (ValueError, TypeError):
+            pass
+        filtered.append(d)
+    return JSONResponse({"delegations": filtered, "sim_time": now})
 
 
 @mcp.custom_route("/directory/vendors", methods=["GET"])

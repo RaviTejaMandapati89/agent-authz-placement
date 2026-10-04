@@ -171,9 +171,10 @@ def _build_context(tool_name: str, arguments: dict, user: str) -> dict:
                     ctx["expense_claimant_manager"] = mgr
 
     elif tool_name == "book_travel":
+        from domain import simclock as _simclock
         traveller = canonicalise(arguments.get("traveller", ""))
         ctx["traveller"] = traveller
-        now        = datetime.datetime.now(datetime.timezone.utc)
+        now        = datetime.datetime.fromtimestamp(_simclock.now(), tz=datetime.timezone.utc)
         delegators: set[str] = set()
         for d in state.delegations:
             if (

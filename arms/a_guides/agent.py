@@ -98,6 +98,7 @@ def run(
     mcp_url: str,
     run_id: str | None = None,
     between_turns_fn: Any = None,
+    bearer_token: str = "",
 ) -> tuple[str, dict]:
     """
     Run a multi-turn conversation and return (final_reply, usage).
@@ -110,7 +111,7 @@ def run(
         temperature=TEMPERATURE,
     )
     system_prompt = build_system_prompt(agent_name, _current_policy_change, user)
-    headers = {"X-User": user, "X-Agent": agent_name}
+    headers = {"Authorization": f"Bearer {bearer_token}"}
 
     final_reply = ""
     total_input = 0

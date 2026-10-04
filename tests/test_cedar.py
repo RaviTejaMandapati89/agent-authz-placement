@@ -347,14 +347,34 @@ def test_p5_unapproved_vendor_denied():
 # ---------------------------------------------------------------------------
 
 def _mcp_call(base_url: str, tool: str, args: dict, user: str, agent: str) -> dict:
-    common = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": "2025-11-25",
-        "X-User": user,
-        "X-Agent": agent,
-    }
+    all_scopes = ["expenses:read", "expenses:submit", "expenses:approve",
+                  "travel:book", "payments:pay"]
     with httpx.Client(base_url=base_url, timeout=30.0) as client:
+        # Obtain Bearer token via control endpoints
+        r = client.post("/control/identity/user-token", json={
+            "sub": user, "aud": agent, "scope": all_scopes,
+        })
+        r.raise_for_status()
+        user_token = r.json()["access_token"]
+
+        r = client.post("/control/identity/agent-token", json={
+            "sub": agent, "aud": "mcp-server", "scope": all_scopes,
+        })
+        r.raise_for_status()
+        agent_token = r.json()["access_token"]
+
+        r = client.post("/identity/exchange", json={
+            "subject_token": user_token, "actor_token": agent_token,
+        })
+        r.raise_for_status()
+        bearer = r.json()["access_token"]
+
+        common = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-11-25",
+            "Authorization": f"Bearer {bearer}",
+        }
         r = client.post("/mcp", json={
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {
