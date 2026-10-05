@@ -84,6 +84,77 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 """
 
+# Project entry written into the kit's uv.lock in place of the repo project.
+# Matches _PYPROJECT exactly: direct deps only, no forbidden words.
+_CHECKPOINT_GEN_LOCK_ENTRY = """\
+[[package]]
+name = "checkpoint-gen"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "pyjwt" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "strands-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pyjwt", specifier = ">=2.8" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "strands-agents", specifier = ">=0.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+"""
+
+
+def _build_kit_uv_lock(repo_root: pathlib.Path, kit_dir: pathlib.Path) -> None:
+    """Derive a kit-specific uv.lock from the repo's lock.
+
+    Keeps every package entry unchanged (preserving exact versions and hashes),
+    removes the cedarpy entry (contains forbidden word), and replaces the repo
+    project entry with a checkpoint-gen entry that matches the kit's pyproject.toml.
+    The result is a valid frozen lock file for `uv sync --frozen`.
+    """
+    lock_text = (repo_root / "uv.lock").read_text(encoding="utf-8")
+
+    # Split at every [[package]] header, keeping the header as first segment.
+    positions = [m.start() for m in re.finditer(r"^\[\[package\]\]", lock_text, re.MULTILINE)]
+    header = lock_text[: positions[0]] if positions else lock_text
+
+    blocks: list[str] = []
+    for i, pos in enumerate(positions):
+        end = positions[i + 1] if i + 1 < len(positions) else len(lock_text)
+        block = lock_text[pos:end]
+        m = re.match(r"\[\[package\]\]\s*\nname\s*=\s*\"([^\"]+)\"", block)
+        name = m.group(1) if m else None
+
+        if name == "cedarpy":
+            continue  # cedarpy's name contains the forbidden word "cedar"
+        if name in ("guides-vs-gates",):
+            blocks.append(_CHECKPOINT_GEN_LOCK_ENTRY)
+            continue
+        blocks.append(block)
+
+    (kit_dir / "uv.lock").write_text(header + "".join(blocks), encoding="utf-8")
+
 
 def _check_forbidden(kit_root: pathlib.Path) -> list[str]:
     """Return a list of violation strings for any forbidden word or approach+digit
@@ -182,6 +253,7 @@ def build_kit(target_dir: pathlib.Path) -> None:
     (target_dir / "CLAUDE.md").write_text("Run tests with: uv run pytest\n", encoding="utf-8")
     shutil.copy2(_APPROACH3 / "spec_input.md", target_dir / "spec_input.md")
     _copy_policy_md(_REPO_ROOT / "policy.md", target_dir / "policy.md")
+    _build_kit_uv_lock(_REPO_ROOT, target_dir)
 
     hits = _check_forbidden(target_dir)
     if hits:

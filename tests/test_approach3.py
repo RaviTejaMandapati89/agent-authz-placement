@@ -1192,3 +1192,108 @@ def test_g9_generate_sh_allows_specify_scripts_bash():
     assert re.search(r"Bash\(\.\/\.specify\/scripts\/bash\/", text), (
         "generate.sh must include Bash(./.specify/scripts/bash/*) in its allowedTools (G9)"
     )
+
+
+# ---------------------------------------------------------------------------
+# G10: kit contains uv.lock matching repo versions; generate.sh uses --frozen
+# ---------------------------------------------------------------------------
+
+def _parse_uv_lock_versions(lock_text: str, packages: list) -> dict:
+    """Extract {package: version} for the named packages from a uv.lock file."""
+    versions = {}
+    for pkg in packages:
+        m = re.search(
+            r'name\s*=\s*"' + re.escape(pkg) + r'"\s*\nversion\s*=\s*"([^"]+)"',
+            lock_text,
+        )
+        if m:
+            versions[pkg] = m.group(1)
+    return versions
+
+
+def test_g10_generate_sh_uses_uv_sync_frozen():
+    """G10: generate.sh must use 'uv sync --frozen', not bare 'uv sync'."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert "uv sync --frozen" in text, (
+        "generate.sh must use 'uv sync --frozen' to install from the kit lock file (G10)"
+    )
+
+
+def test_g10_kit_contains_uv_lock(tmp_path):
+    """G10: the kit built by build_kit must include a uv.lock file."""
+    from arms.approach3.make_kit import build_kit
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+    assert (kit / "uv.lock").exists(), (
+        "kit must contain a uv.lock file so 'uv sync --frozen' is reproducible (G10)"
+    )
+
+
+def test_g10_kit_uv_lock_pins_strands_agents_to_repo_version(tmp_path):
+    """G10: kit uv.lock must pin strands-agents to the same version as the repo."""
+    from arms.approach3.make_kit import build_kit
+
+    repo_lock = (_REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
+    repo_versions = _parse_uv_lock_versions(repo_lock, ["strands-agents"])
+    assert "strands-agents" in repo_versions, "repo uv.lock does not pin strands-agents"
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+    kit_lock_path = kit / "uv.lock"
+    assert kit_lock_path.exists(), "kit has no uv.lock (prerequisite for version check)"
+
+    kit_versions = _parse_uv_lock_versions(
+        kit_lock_path.read_text(encoding="utf-8"), ["strands-agents"]
+    )
+    assert "strands-agents" in kit_versions, "kit uv.lock does not pin strands-agents"
+    assert kit_versions["strands-agents"] == repo_versions["strands-agents"], (
+        f"kit pins strands-agents=={kit_versions['strands-agents']} "
+        f"but repo uv.lock has {repo_versions['strands-agents']} (G10)"
+    )
+
+
+def test_g10_kit_uv_lock_pins_mcp_to_repo_version(tmp_path):
+    """G10: kit uv.lock must pin mcp to the same version as the repo."""
+    from arms.approach3.make_kit import build_kit
+
+    repo_lock = (_REPO_ROOT / "uv.lock").read_text(encoding="utf-8")
+    repo_versions = _parse_uv_lock_versions(repo_lock, ["mcp"])
+    assert "mcp" in repo_versions, "repo uv.lock does not pin mcp"
+
+    kit = tmp_path / "kit"
+    build_kit(kit)
+    kit_lock_path = kit / "uv.lock"
+    assert kit_lock_path.exists(), "kit has no uv.lock (prerequisite for version check)"
+
+    kit_versions = _parse_uv_lock_versions(
+        kit_lock_path.read_text(encoding="utf-8"), ["mcp"]
+    )
+    assert "mcp" in kit_versions, "kit uv.lock does not pin mcp"
+    assert kit_versions["mcp"] == repo_versions["mcp"], (
+        f"kit pins mcp=={kit_versions['mcp']} "
+        f"but repo uv.lock has {repo_versions['mcp']} (G10)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# G11: allowed tools include both Spec Kit skill script path forms;
+#      ls remains refused (G7 already covers the ls check)
+# ---------------------------------------------------------------------------
+
+def test_g11_generate_sh_allows_speckit_skill_scripts_bare_form():
+    """G11: generate.sh must include Bash(.claude/skills/speckit-*/scripts/bash/*)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Bash\(\.claude/skills/speckit-\*/scripts/bash/", text), (
+        "generate.sh must include Bash(.claude/skills/speckit-*/scripts/bash/*) "
+        "in its allowedTools (G11)"
+    )
+
+
+def test_g11_generate_sh_allows_speckit_skill_scripts_bash_prefix_form():
+    """G11: generate.sh must include Bash(bash .claude/skills/speckit-*/scripts/bash/*)."""
+    text = _GENERATE_SH.read_text(encoding="utf-8")
+    assert re.search(r"Bash\(bash \.claude/skills/speckit-\*/scripts/bash/", text), (
+        "generate.sh must include Bash(bash .claude/skills/speckit-*/scripts/bash/*) "
+        "in its allowedTools (G11)"
+    )
