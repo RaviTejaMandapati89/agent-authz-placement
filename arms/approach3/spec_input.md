@@ -159,3 +159,6 @@ The checkpoint may only import from:
 own specification, plan, and task documents are permitted in the kit folder
 alongside `checkpoint.py`. The generator may also write its own tests to
 `tests/generated/`; those files are not imported by the pipeline.
+
+The installed library source, including strands, is inside this folder under
+`./.venv`; use the read and search tools to inspect it.

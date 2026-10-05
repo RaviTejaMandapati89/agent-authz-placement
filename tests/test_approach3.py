@@ -1297,3 +1297,46 @@ def test_g11_generate_sh_allows_speckit_skill_scripts_bash_prefix_form():
         "generate.sh must include Bash(bash .claude/skills/speckit-*/scripts/bash/*) "
         "in its allowedTools (G11)"
     )
+
+
+# ---------------------------------------------------------------------------
+# G12: spec_input.md tells the generator the library source is under ./.venv
+#      and to use the read and search tools to inspect it
+# ---------------------------------------------------------------------------
+
+def test_g12_spec_input_states_library_under_venv():
+    """G12: spec_input.md must state the installed library source is under ./.venv."""
+    text = (_APPROACH3 / "spec_input.md").read_text(encoding="utf-8")
+    assert ".venv" in text, (
+        "spec_input.md must tell the generator the library source is under ./.venv (G12)"
+    )
+
+
+def test_g12_spec_input_names_strands_in_venv_sentence():
+    """G12: spec_input.md must name strands as part of the library available under ./.venv."""
+    text = (_APPROACH3 / "spec_input.md").read_text(encoding="utf-8")
+    lower = text.lower()
+    venv_pos = text.find(".venv")
+    assert venv_pos != -1, "spec_input.md does not mention .venv (G12 prerequisite)"
+    context = lower[max(0, venv_pos - 200):venv_pos + 200]
+    assert "strands" in context, (
+        "spec_input.md must name 'strands' in the vicinity of the .venv sentence (G12)"
+    )
+
+
+def test_g12_spec_input_says_use_read_and_search_tools():
+    """G12: spec_input.md must tell the generator to use the read and search tools
+    to inspect the library source in ./.venv.
+    """
+    text = (_APPROACH3 / "spec_input.md").read_text(encoding="utf-8")
+    lower = text.lower()
+    venv_pos = lower.find(".venv")
+    assert venv_pos != -1, "spec_input.md does not mention .venv (G12 prerequisite)"
+    context = lower[max(0, venv_pos - 300):venv_pos + 300]
+    has_read = "read" in context
+    has_search = "search" in context
+    assert has_read and has_search, (
+        "spec_input.md must instruct the generator to use the read and search tools "
+        "to inspect library source in ./.venv (G12); "
+        f"'read' found={has_read}, 'search' found={has_search}"
+    )
