@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DecisionLogEntry",
+  "description": "One structured log entry written per tool-call evaluation to HOOK_LOG",
+  "type": "object",
+  "required": ["call_id", "run_id", "timestamp", "sim_time", "user", "agent", "tool", "arguments", "decision", "rule", "reason"],
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "description": "UUID4 generated per evaluation",
+      "format": "uuid"
+    },
+    "run_id": {
+      "type": ["string", "null"],
+      "description": "Run identifier from constructor"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp of the decision",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "sim_time": {
+      "type": ["number", "null"],
+      "description": "Simulation clock time from the directory response; null if no directory call was made"
+    },
+    "user": {
+      "type": "string",
+      "description": "The acting user"
+    },
+    "agent": {
+      "type": "string",
+      "description": "The agent name"
+    },
+    "tool": {
+      "type": "string",
+      "description": "Tool name from event.tool_use[\"name\"]"
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Raw arguments dict from event.tool_use[\"input\"]"
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "error"],
+      "description": "Outcome of the policy evaluation"
+    },
+    "rule": {
+      "type": ["string", "null"],
+      "enum": ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "SCOPE", null],
+      "description": "Rule identifier that determined the decision; null for allow"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Human-readable explanation of the decision"
+    }
+  },
+  "additionalProperties": false
+}
