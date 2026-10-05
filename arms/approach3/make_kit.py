@@ -233,14 +233,20 @@ def _copy_policy_md(src: pathlib.Path, dst: pathlib.Path) -> None:
 def build_kit(target_dir: pathlib.Path) -> None:
     """Build a complete approach-3 kit into target_dir (created if absent).
 
+    The kit's uv.lock and agent configs are read from the committed snapshot
+    at arms/approach3/kit_snapshot/ so that later changes to the repo's
+    uv.lock or live agent configs cannot alter what this function produces.
+
     Raises RuntimeError if forbidden words are found in the assembled kit.
     """
+    _KIT_SNAPSHOT = _APPROACH3 / "kit_snapshot"
+
     target_dir.mkdir(parents=True, exist_ok=True)
 
     _copy_domain(_REPO_ROOT / "domain", target_dir / "domain")
 
     _copy_agent_configs(
-        _REPO_ROOT / "arms" / "c_hook" / "config",
+        _KIT_SNAPSHOT / "config" / "agents",
         target_dir,
     )
 
@@ -253,7 +259,7 @@ def build_kit(target_dir: pathlib.Path) -> None:
     (target_dir / "CLAUDE.md").write_text("Run tests with: uv run pytest\n", encoding="utf-8")
     shutil.copy2(_APPROACH3 / "spec_input.md", target_dir / "spec_input.md")
     _copy_policy_md(_REPO_ROOT / "policy.md", target_dir / "policy.md")
-    _build_kit_uv_lock(_REPO_ROOT, target_dir)
+    shutil.copy2(_KIT_SNAPSHOT / "uv.lock", target_dir / "uv.lock")
 
     hits = _check_forbidden(target_dir)
     if hits:

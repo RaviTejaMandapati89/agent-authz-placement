@@ -1,0 +1,11 @@
+agent: expense-assistant
+acts_for: any
+expense_limit: 500
+allowed_tools:
+- read_receipt
+- submit_expense
+- approve_expense
+fingerprints:
+  read_receipt: 80d48b7490ae5b989880a39a257d8eadf182d3d6bed8e55783b8560a8912eabb
+  submit_expense: 4548fbca0d1440ee2f3bb0aa3fdc4514a38e452fd5b421c898528a0a5b486207
+  approve_expense: fe14fa2f110a789720b2a8b5c3a64b3c45cb57684fabcc9a8af8a101275e378f
