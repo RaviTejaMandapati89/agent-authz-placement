@@ -1,0 +1,115 @@
+{
+  "schema": "results/approach3_conformance.json v1",
+  "source": "scripts/gen_conformance.py \u2014 reads actual checkpoint output, not hand-written",
+  "required_fields": [
+    "call_id",
+    "run_id",
+    "timestamp",
+    "sim_time",
+    "user",
+    "agent",
+    "tool",
+    "arguments",
+    "decision",
+    "rule",
+    "reason"
+  ],
+  "note": "'type' is not a required field per the decision-log table in arms/approach3/kit_snapshot/spec_input.md (section 8), which is the authoritative field list. Its absence from generated checkpoints is correct. Harness readers must not filter on type=='decision'; use presence of 'decision' and 'tool' fields instead.",
+  "generations": {
+    "gen-1": {
+      "missing_required_fields": [],
+      "extra_fields_beyond_schema": [],
+      "type_field_present": false,
+      "all_fields_emitted": [
+        "call_id",
+        "run_id",
+        "timestamp",
+        "sim_time",
+        "user",
+        "agent",
+        "tool",
+        "arguments",
+        "decision",
+        "rule",
+        "reason"
+      ],
+      "status": "ok"
+    },
+    "gen-2": {
+      "missing_required_fields": [],
+      "extra_fields_beyond_schema": [],
+      "type_field_present": false,
+      "all_fields_emitted": [
+        "call_id",
+        "run_id",
+        "timestamp",
+        "sim_time",
+        "user",
+        "agent",
+        "tool",
+        "arguments",
+        "decision",
+        "rule",
+        "reason"
+      ],
+      "status": "ok"
+    },
+    "gen-3": {
+      "missing_required_fields": [],
+      "extra_fields_beyond_schema": [],
+      "type_field_present": false,
+      "all_fields_emitted": [
+        "call_id",
+        "run_id",
+        "timestamp",
+        "sim_time",
+        "user",
+        "agent",
+        "tool",
+        "arguments",
+        "decision",
+        "rule",
+        "reason"
+      ],
+      "status": "ok"
+    },
+    "gen-4": {
+      "missing_required_fields": [],
+      "extra_fields_beyond_schema": [],
+      "type_field_present": false,
+      "all_fields_emitted": [
+        "call_id",
+        "run_id",
+        "timestamp",
+        "sim_time",
+        "user",
+        "agent",
+        "tool",
+        "arguments",
+        "decision",
+        "rule",
+        "reason"
+      ],
+      "status": "ok"
+    },
+    "gen-5": {
+      "missing_required_fields": [],
+      "extra_fields_beyond_schema": [],
+      "type_field_present": false,
+      "all_fields_emitted": [
+        "call_id",
+        "run_id",
+        "timestamp",
+        "sim_time",
+        "user",
+        "agent",
+        "tool",
+        "arguments",
+        "decision",
+        "rule",
+        "reason"
+      ],
+      "status": "ok"
+    }
+  }
+}

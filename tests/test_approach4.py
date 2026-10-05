@@ -139,7 +139,7 @@ def _fingerprints() -> dict[str, str]:
 
 def _last_decision(log_path: pathlib.Path) -> dict:
     lines = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
-    decisions = [l for l in lines if l.get("type") == "decision"]
+    decisions = [l for l in lines if "decision" in l and "tool" in l]
     assert decisions, "no decision lines in log"
     return decisions[-1]
 
@@ -1389,10 +1389,10 @@ def test_a4_e10_agent_grants_payments_has_approve_expense():
 # --- E11–E12: runner _AGENT_SCOPES -----------------------------------------
 
 def test_a4_e11_runner_scopes_travel_assistant():
-    """Runner requests travel:book and expenses:submit for travel-assistant."""
+    """Runner requests travel:book, expenses:submit and agents:payments for travel-assistant."""
     import runner.run as _run
     scopes = sorted(_run._AGENT_SCOPES.get("travel-assistant", []))
-    assert scopes == sorted(["expenses:submit", "travel:book"]), (
+    assert scopes == sorted(["expenses:submit", "travel:book", "agents:payments"]), (
         f"runner _AGENT_SCOPES travel-assistant: {scopes}"
     )
 

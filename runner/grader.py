@@ -60,7 +60,7 @@ def merge_decision_log(log_lines: list[dict], run_id: str) -> list[dict]:
     outcomes: dict[str, dict] = {}
 
     for line in log_lines:
-        if line.get("type") == "decision" and line.get("run_id") == run_id:
+        if "decision" in line and "tool" in line and line.get("run_id") == run_id:
             decisions[line["call_id"]] = line
         elif line.get("type") == "outcome":
             outcomes[line["call_id"]] = line

@@ -417,3 +417,122 @@ async def handle_mcp(request: Request) -> JSONResponse:
         "id": req_id,
         "error": {"code": -32601, "message": f"unknown method {method!r}"},
     })
+
+
+# ---------------------------------------------------------------------------
+# A2A check pipeline: IDENTITY → GRANT → SCOPE → policy plugin (no P6)
+# ---------------------------------------------------------------------------
+
+async def _check_a2a_pipeline(
+    auth_header: str | None,
+) -> tuple[dict, dict, str]:
+    """Returns (caller, decision, call_id) for an A2A delegation check."""
+    call_id = str(uuid.uuid4())
+    caller: dict = {"user": None, "agent": None}
+
+    # 1. IDENTITY
+    if not auth_header or not auth_header.startswith("Bearer "):
+        decision = {
+            "decision": "deny", "rule": "IDENTITY",
+            "reason": "missing Bearer token",
+        }
+        return caller, decision, call_id
+
+    try:
+        claims = tokens.verify_bearer(
+            auth_header[7:],
+            audience="payments-agent",
+            check_expiry=not _skip_token_expiry,
+        )
+    except Exception as exc:
+        decision = {
+            "decision": "deny", "rule": "IDENTITY",
+            "reason": str(exc),
+        }
+        return caller, decision, call_id
+
+    caller = tokens.claims_to_caller(claims)
+
+    # 2. GRANT — may this agent call payments-agent?
+    agent = caller.get("agent")
+    agent_name = (
+        agent if isinstance(agent, str)
+        else agent[0] if isinstance(agent, list) and agent
+        else None
+    )
+
+    if agent_name not in _grants:
+        decision = {
+            "decision": "deny", "rule": "GRANT",
+            "reason": f"agent {agent_name!r} not in grants",
+        }
+        return caller, decision, call_id
+
+    if "ask_payments_agent" not in _grants.get(agent_name, []):
+        decision = {
+            "decision": "deny", "rule": "GRANT",
+            "reason": f"ask_payments_agent not granted to {agent_name!r}",
+        }
+        return caller, decision, call_id
+
+    # 3. SCOPE — agents:payments required
+    token_scopes = set(claims.get("scope", "").split())
+    required_scope = _scope_map.get("ask_payments_agent", "agents:payments")
+    if required_scope not in token_scopes:
+        decision = {
+            "decision": "deny", "rule": "SCOPE",
+            "reason": f"missing scope {required_scope!r}",
+        }
+        return caller, decision, call_id
+
+    # 4. Policy plugin
+    agent_chain = caller.get("agent")
+    if isinstance(agent_chain, str):
+        agent_chain = [agent_chain]
+
+    try:
+        import inspect as _inspect
+        result = _policy_plugin(claims, agent_chain, "ask_payments_agent", {})
+        if _inspect.iscoroutine(result):
+            result = await result
+    except Exception as exc:
+        decision = {"decision": "error", "rule": None, "reason": str(exc)}
+        return caller, decision, call_id
+
+    decision = {
+        "decision": result["decision"],
+        "rule": result.get("rule"),
+        "reason": result.get("reason", ""),
+        "central_called": result.get("central_called", False),
+        "central_duration_ms": result.get("central_duration_ms", 0),
+    }
+    for key in ("central_copy_version", "revocation_applied"):
+        if key in result:
+            decision[key] = result[key]
+    return caller, decision, call_id
+
+
+async def handle_a2a(request: Request) -> JSONResponse:
+    """Handle /gateway/a2a/payments-agent — check pipeline then forward internally."""
+    if not _active:
+        return JSONResponse(
+            {"jsonrpc": "2.0", "error": {"code": -32000, "message": "gateway not active"}},
+            status_code=404,
+        )
+
+    auth = request.headers.get("authorization")
+    caller, decision, call_id = await _check_a2a_pipeline(auth)
+    _gw_decision_line(call_id, caller, "ask_payments_agent", {}, decision)
+
+    if decision["decision"] in ("deny", "error"):
+        _gw_outcome_line(call_id, executed=False, error=decision["reason"])
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32003, "message": decision["reason"]},
+        }, status_code=403)
+
+    _gw_outcome_line(call_id, executed=True)
+
+    from domain.server import _handle_a2a_internal
+    return await _handle_a2a_internal(request)

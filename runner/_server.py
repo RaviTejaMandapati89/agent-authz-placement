@@ -37,7 +37,7 @@ def domain_server(decision_log: str, env_extra: dict | None = None):
         "SERVER_PORT": str(port),
         "DECISION_LOG": decision_log,
     }
-    for key in ("_GATEWAY_TESTING", "GATEWAY_TEST_PLUGIN"):
+    for key in ("_GATEWAY_TESTING", "GATEWAY_TEST_PLUGIN", "SERVER_TEST_MODE"):
         env.pop(key, None)
     env.update(env_extra or {})
     stderr_file = tempfile.NamedTemporaryFile(

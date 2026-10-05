@@ -33,8 +33,8 @@ _SCENARIOS_DIR = _REPO_ROOT / "scenarios"
 _B_SPEC_DIR = _REPO_ROOT / "arms" / "b_spec"
 
 _AGENT_SCOPES: dict[str, list[str]] = {
-    "expense-assistant": ["expenses:read", "expenses:submit", "expenses:approve"],
-    "travel-assistant": ["expenses:submit", "travel:book"],
+    "expense-assistant": ["expenses:read", "expenses:submit", "expenses:approve", "agents:payments"],
+    "travel-assistant": ["expenses:submit", "travel:book", "agents:payments"],
     "payments-agent": ["expenses:approve", "payments:pay"],
 }
 
@@ -769,6 +769,10 @@ def main() -> None:
     server_env: dict = {}
     if args.arm == "D":
         server_env["ENFORCEMENT"] = "cedar"
+    _arm_approach = {"A": "1", "C": "2", "3": "3", "D": "1"}
+    server_env["PAYMENTS_AGENT_APPROACH"] = _arm_approach.get(args.arm, "1")
+    if args.arm == "3" and args.gen and args.gen != "all":
+        server_env["PAYMENTS_AGENT_GEN"] = f"gen-{args.gen}"
 
     any_error = False
     with domain_server(decision_log, env_extra=server_env) as (port, base_url):

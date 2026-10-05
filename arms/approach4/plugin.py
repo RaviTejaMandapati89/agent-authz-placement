@@ -101,6 +101,9 @@ def _rule_id_from_result(result: cedarpy.AuthzResult) -> str | None:
 
 
 def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) -> dict:
+    if tool == "ask_payments_agent":
+        return {"decision": "allow", "rule": None, "reason": "delegation"}
+
     agent = agent_chain[0] if agent_chain else None
     use_case = AGENT_USE_CASE.get(agent)
     if use_case is None:

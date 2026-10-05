@@ -215,6 +215,12 @@ def _build_uc_context(tool: str, arguments: dict) -> dict:
 def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) -> dict:
     global _snapshot
 
+    if tool == "ask_payments_agent":
+        return {"decision": "allow", "rule": None, "reason": "delegation",
+                "central_called": False, "central_duration_ms": 0,
+                "central_copy_version": _snapshot_version,
+                "revocation_applied": False}
+
     agent = agent_chain[0] if agent_chain else None
     use_case = AGENT_USE_CASE.get(agent)
     if use_case is None:

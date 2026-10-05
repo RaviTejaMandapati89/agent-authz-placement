@@ -628,13 +628,14 @@ async def test_exchange_act_nests_on_second_hop(http_client):
 # ---------------------------------------------------------------------------
 
 def test_fixed_scopes_match_spec():
-    """FIXED_SCOPES is exactly the five scopes listed in the spec."""
+    """FIXED_SCOPES is exactly the six scopes listed in the spec."""
     assert tokens.FIXED_SCOPES == {
         "expenses:read",
         "expenses:submit",
         "expenses:approve",
         "travel:book",
         "payments:pay",
+        "agents:payments",
     }
 
 

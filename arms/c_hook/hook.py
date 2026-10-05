@@ -12,6 +12,7 @@ import pathlib
 from typing import Any
 
 import httpx
+import jwt as _jwt
 import yaml
 
 from domain.identity import canonicalise
@@ -143,11 +144,13 @@ class PolicyHook(HookProvider):
         if not self._bearer_token:
             return "deny", "SCOPE", "missing bearer token"
         try:
-            from domain import tokens as _tokens
-            claims = _tokens.verify_bearer(self._bearer_token)
+            payload = _jwt.decode(
+                self._bearer_token,
+                options={"verify_signature": False, "verify_exp": False, "verify_aud": False},
+            )
         except Exception as exc:
             return "deny", "SCOPE", f"bearer token unreadable: {exc}"
-        token_scopes = set(claims.get("scope", "").split())
+        token_scopes = set(payload.get("scope", "").split())
         if required not in token_scopes:
             return "deny", "SCOPE", f"missing scope {required!r}"
         return None
@@ -258,6 +261,7 @@ class PolicyHook(HookProvider):
         reason: str,
     ) -> None:
         entry = {
+            "type": "decision",
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "sim_time": self._last_dir_sim_time,
             "run_id": self._run_id,

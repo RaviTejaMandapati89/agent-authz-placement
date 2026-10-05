@@ -154,14 +154,14 @@ def _read_decisions(log_path) -> list[dict]:
 
 def _last_decision(log_path) -> dict:
     lines = _read_decisions(log_path)
-    decisions = [l for l in lines if l.get("type") == "decision"]
+    decisions = [l for l in lines if "decision" in l and "tool" in l]
     assert decisions, "no decision lines in log"
     return decisions[-1]
 
 
 def _last_pair(log_path) -> tuple[dict, dict]:
     lines = _read_decisions(log_path)
-    decisions = [l for l in lines if l.get("type") == "decision"]
+    decisions = [l for l in lines if "decision" in l and "tool" in l]
     outcomes = [l for l in lines if l.get("type") == "outcome"]
     assert decisions and outcomes
     return decisions[-1], outcomes[-1]

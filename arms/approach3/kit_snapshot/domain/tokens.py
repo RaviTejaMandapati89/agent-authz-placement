@@ -23,7 +23,6 @@ FIXED_SCOPES: frozenset[str] = frozenset({
     "expenses:approve",
     "travel:book",
     "payments:pay",
-    "agents:payments",
 })
 DEFAULT_LIFETIME: int = 300
 MAX_LIFETIME: int = 3600

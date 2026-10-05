@@ -128,16 +128,17 @@ def test_scope_map_module_exists():
     assert isinstance(TOOL_SCOPE_MAP, dict)
 
 
-def test_scope_map_has_all_five_tools():
-    """TOOL_SCOPE_MAP must contain exactly the five tool→scope entries.
+def test_scope_map_has_all_six_tools():
+    """TOOL_SCOPE_MAP must contain exactly the six tool→scope entries.
     FAILS: module does not exist yet."""
     from domain.scopes import TOOL_SCOPE_MAP
     assert TOOL_SCOPE_MAP == {
-        "read_receipt":    "expenses:read",
-        "submit_expense":  "expenses:submit",
-        "approve_expense": "expenses:approve",
-        "book_travel":     "travel:book",
-        "pay_vendor":      "payments:pay",
+        "read_receipt":       "expenses:read",
+        "submit_expense":     "expenses:submit",
+        "approve_expense":    "expenses:approve",
+        "book_travel":        "travel:book",
+        "pay_vendor":         "payments:pay",
+        "ask_payments_agent": "agents:payments",
     }
 
 
@@ -469,10 +470,18 @@ def test_approve_expense_scope_defined_only_in_scopes_py():
     pattern = re.compile(r"approve_expense.*expenses:approve|expenses:approve.*approve_expense")
     found_in = []
 
+    kit_snapshot = repo_root / "arms" / "approach3" / "kit_snapshot"
+
     for path in repo_root.rglob("*.py"):
         # skip tests/ entirely
         try:
             path.relative_to(repo_root / "tests")
+            continue
+        except ValueError:
+            pass
+        # skip the frozen kit snapshot archive (copied into kits, never executed)
+        try:
+            path.relative_to(kit_snapshot)
             continue
         except ValueError:
             pass
@@ -484,4 +493,50 @@ def test_approve_expense_scope_defined_only_in_scopes_py():
     assert found_in == ["domain/scopes.py"], (
         f"Pairing 'approve_expense: expenses:approve' found outside tests/ in: {found_in!r}; "
         "expected only domain/scopes.py"
+    )
+
+
+def test_kit_snapshot_never_imported_at_runtime():
+    """No code outside the kit builder may import from or read kit_snapshot/."""
+    import pathlib
+    import re
+
+    repo_root = pathlib.Path(__file__).parent.parent
+    kit_snapshot_re = re.compile(r"kit_snapshot")
+    allowed = {
+        "arms/approach3/make_kit.py",
+        # gen_conformance.py reads spec_input.md from the frozen snapshot to judge
+        # generations against the spec they were generated from (verification script,
+        # not runtime code).
+        "scripts/gen_conformance.py",
+    }
+
+    violators = []
+    for path in repo_root.rglob("*.py"):
+        rel = str(path.relative_to(repo_root))
+        if rel in allowed:
+            continue
+        # skip tests/ — tests may reference kit_snapshot for verification
+        try:
+            path.relative_to(repo_root / "tests")
+            continue
+        except ValueError:
+            pass
+        # skip the snapshot itself
+        try:
+            path.relative_to(repo_root / "arms" / "approach3" / "kit_snapshot")
+            continue
+        except ValueError:
+            pass
+        if "__pycache__" in rel:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for i, line in enumerate(text.splitlines(), 1):
+            if kit_snapshot_re.search(line) and not line.lstrip().startswith("#"):
+                violators.append(f"{rel}:{i}: {line.strip()}")
+
+    assert not violators, (
+        "kit_snapshot/ is a frozen archive — it is copied into kits, never "
+        "executed or imported at run time. Found references outside the kit "
+        "builder and tests:\n" + "\n".join(violators)
     )

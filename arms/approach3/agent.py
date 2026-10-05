@@ -6,12 +6,17 @@ passes bearer_token and config_dir, and attaches it as a hook.
 """
 import datetime
 import importlib.util
+import json
 import pathlib
+import uuid
+from typing import Any
 
 from dotenv import load_dotenv
-from strands import Agent
+from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 from strands.tools.mcp import MCPClient
+
+import httpx
 
 from domain.identity import identity_paragraph
 from runner.config import AWS_REGION, MODEL_ID, TEMPERATURE
@@ -45,6 +50,41 @@ def _load_checkpoint(gen: int):
     return mod.PolicyHook
 
 
+def _make_ask_payments_agent(base_url: str, bearer_token: str, use_gateway: bool = False):
+    """Create the ask_payments_agent local tool."""
+    @tool
+    def ask_payments_agent(request: str) -> str:
+        """Send a request to payments-agent via A2A."""
+        endpoint = "/gateway/a2a/payments-agent" if use_gateway else "/a2a/payments-agent"
+        body = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "messageId": str(uuid.uuid4()),
+                    "role": "user",
+                    "parts": [{"kind": "text", "text": request}],
+                },
+            },
+        }
+        resp = httpx.post(
+            f"{base_url}{endpoint}",
+            json=body,
+            headers={"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"},
+            timeout=30.0,
+        )
+        result = resp.json()
+        if "error" in result:
+            return result["error"].get("message", str(result["error"]))
+        msg = result.get("result", {}).get("message", {})
+        parts = msg.get("parts", [])
+        texts = [p["text"] for p in parts if p.get("kind") == "text"]
+        return " ".join(texts) if texts else json.dumps(result.get("result", {}))
+
+    return ask_payments_agent
+
+
 def run(
     agent_name: str,
     user: str,
@@ -55,21 +95,30 @@ def run(
     bearer_token: str = "",
     config_dir: pathlib.Path | None = None,
     gen: int = 1,
+    model: Any = None,
+    use_gateway: bool = False,
 ) -> tuple[str, dict, list[dict]]:
     """Run a multi-turn conversation and return (final_reply, usage, turns_data)."""
-    model = BedrockModel(
-        model_id=MODEL_ID,
-        region_name=AWS_REGION,
-        temperature=TEMPERATURE,
-    )
+    if model is None:
+        model = BedrockModel(
+            model_id=MODEL_ID,
+            region_name=AWS_REGION,
+            temperature=TEMPERATURE,
+        )
+    if not hasattr(model, "stateful"):
+        model.stateful = False
     system_prompt = identity_paragraph(agent_name, user)
     headers = {"Authorization": f"Bearer {bearer_token}"}
 
     base_url = mcp_url.rsplit("/mcp", 1)[0]
+    effective_mcp_url = f"{base_url}/gateway/mcp" if use_gateway else mcp_url
 
     limit_override: int | None = None
     if "expense_limit" in _current_policy_override:
         limit_override = int(_current_policy_override["expense_limit"])
+
+    if config_dir is None:
+        config_dir = pathlib.Path(__file__).parent.parent / "c_hook" / "config"
 
     PolicyHook = _load_checkpoint(gen)
     hook = PolicyHook(
@@ -87,9 +136,11 @@ def run(
     total_output = 0
     turns_data: list[dict] = []
 
-    mcp_client = MCPClient(url=mcp_url, headers=headers)
+    ask_tool = _make_ask_payments_agent(base_url, bearer_token, use_gateway)
+
+    mcp_client = MCPClient(url=effective_mcp_url, headers=headers)
     with mcp_client:
-        tools = list(mcp_client.list_tools_sync())
+        tools = list(mcp_client.list_tools_sync()) + [ask_tool]
         agent = Agent(
             model=model,
             tools=tools,

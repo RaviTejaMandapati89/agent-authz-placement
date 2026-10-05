@@ -5,6 +5,7 @@ allowed_tools:
 - read_receipt
 - submit_expense
 - approve_expense
+- ask_payments_agent
 fingerprints:
   read_receipt: 80d48b7490ae5b989880a39a257d8eadf182d3d6bed8e55783b8560a8912eabb
   submit_expense: 4548fbca0d1440ee2f3bb0aa3fdc4514a38e452fd5b421c898528a0a5b486207

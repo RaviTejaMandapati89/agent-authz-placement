@@ -10,8 +10,8 @@ import yaml
 
 
 EXPECTED_SCOPES = {
-    "expense-assistant": sorted(["expenses:read", "expenses:submit", "expenses:approve"]),
-    "travel-assistant": sorted(["expenses:submit", "travel:book"]),
+    "expense-assistant": sorted(["expenses:read", "expenses:submit", "expenses:approve", "agents:payments"]),
+    "travel-assistant": sorted(["expenses:submit", "travel:book", "agents:payments"]),
     "payments-agent": sorted(["expenses:approve", "payments:pay"]),
 }
 

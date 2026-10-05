@@ -1,10 +1,8 @@
-import asyncio
 import datetime
 import json
 import os
 import pathlib
 import uuid
-from collections.abc import AsyncGenerator
 from typing import Any, Callable
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -48,67 +46,6 @@ def deregister_reset_callback(fn) -> None:
         _reset_callbacks.remove(fn)
     except ValueError:
         pass
-
-
-# ---------------------------------------------------------------------------
-# A2A payments-agent state (ScriptedModel turns, last transcript)
-# ---------------------------------------------------------------------------
-
-_payments_agent_model_turns: list[dict] | None = None
-_last_transcript: dict = {}
-
-
-class _ScriptedModel:
-    """Strands-compatible model stub for deterministic testing."""
-
-    def __init__(self, turns: list[dict]) -> None:
-        self._turns = list(turns)
-        self._idx = 0
-
-    stateful = False
-
-    def get_config(self) -> dict:
-        return {}
-
-    def update_config(self, **kwargs: Any) -> None:
-        pass
-
-    @property
-    def context_window_limit(self) -> int:
-        return 200_000
-
-    def count_tokens(self, messages: list, tool_specs: list | None = None,
-                     system_prompt: str | None = None, **kwargs: Any) -> int:
-        return len(str(messages)) // 4
-
-    def estimate_utilization(self, input_tokens: int) -> float:
-        return 0.0
-
-    async def stream(self, messages: list, tool_specs: list | None = None,
-                     system_prompt: str | None = None, **kwargs: Any) -> AsyncGenerator[dict, None]:
-        turn = (self._turns[self._idx] if self._idx < len(self._turns) else {"text": "Done."})
-        self._idx += 1
-        yield {"messageStart": {"role": "assistant"}}
-        if "tool" in turn:
-            tool_id = f"tooluse_{uuid.uuid4().hex[:8]}"
-            yield {"contentBlockStart": {"contentBlockIndex": 0,
-                   "start": {"toolUse": {"name": turn["tool"], "toolUseId": tool_id}}}}
-            yield {"contentBlockDelta": {"contentBlockIndex": 0,
-                   "delta": {"toolUse": {"input": json.dumps(turn.get("input", {})),
-                             "toolUseId": tool_id, "name": turn["tool"]}}}}
-            yield {"contentBlockStop": {"contentBlockIndex": 0}}
-            yield {"messageStop": {"stopReason": "tool_use"}}
-        else:
-            yield {"contentBlockStart": {"contentBlockIndex": 0, "start": {"text": ""}}}
-            yield {"contentBlockDelta": {"contentBlockIndex": 0,
-                   "delta": {"text": turn.get("text", "Done.")}}}
-            yield {"contentBlockStop": {"contentBlockIndex": 0}}
-            yield {"messageStop": {"stopReason": "end_turn"}}
-        yield {"metadata": {"usage": {"inputTokens": 5, "outputTokens": 5, "totalTokens": 10,
-               "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
-               "metrics": {"latencyMs": 1}}}
-
-    stream.__wrapped__ = True
 
 
 # ---------------------------------------------------------------------------
@@ -409,9 +346,6 @@ def execute_tool(tool_name: str, arguments: dict, caller: dict) -> Any:
 
 @mcp.custom_route("/control/reset", methods=["POST"])
 async def _ctrl_reset(request: Request) -> JSONResponse:
-    global _payments_agent_model_turns, _last_transcript
-    _payments_agent_model_turns = None
-    _last_transcript = {}
     # Restore tools before resetting state.
     if mcp._tool_manager.get_tool("export_all_expenses"):
         mcp.remove_tool("export_all_expenses")
@@ -544,21 +478,6 @@ async def _ctrl_set_run(request: Request) -> JSONResponse:
 async def _ctrl_ledger(request: Request) -> JSONResponse:
     return JSONResponse(state.ledger)
 
-
-@mcp.custom_route("/control/set_model_turns", methods=["POST"])
-async def _ctrl_set_model_turns(request: Request) -> JSONResponse:
-    if os.environ.get("SERVER_TEST_MODE") != "1":
-        return JSONResponse({"error": "forbidden"}, status_code=403)
-    global _payments_agent_model_turns
-    body = await request.json()
-    _payments_agent_model_turns = body.get("turns", [])
-    return JSONResponse({"ok": True})
-
-
-@mcp.custom_route("/control/last_transcript", methods=["GET"])
-async def _ctrl_last_transcript(request: Request) -> JSONResponse:
-    return JSONResponse(_last_transcript)
-
 # ---------------------------------------------------------------------------
 # identity issuing routes (harness-only, under /control/identity/)
 # ---------------------------------------------------------------------------
@@ -672,155 +591,6 @@ async def _dir_expense(request: Request) -> JSONResponse:
     return JSONResponse({"claimant": expense["claimant"], "status": expense["status"]})
 
 # --- GATEWAY BEGIN ---
-# ---------------------------------------------------------------------------
-# A2A payments-agent handler
-# ---------------------------------------------------------------------------
-
-def _run_payments_agent(task: str, tool_server_token: str, user: str,
-                        approach: str, gen: str, use_gateway: bool) -> tuple[str, list[dict]]:
-    """Run payments-agent synchronously (called inside asyncio.to_thread)."""
-    port = int(os.environ.get("SERVER_PORT", "8765"))
-    base_url = f"http://127.0.0.1:{port}"
-    mcp_url = f"{base_url}/mcp"
-
-    model = None
-    if _payments_agent_model_turns is not None:
-        model = _ScriptedModel(_payments_agent_model_turns)
-
-    import importlib as _il
-    if approach in ("1", "4", "5", "6"):
-        _arm_a = _il.import_module("arm" + "s.a_guides.agent")
-        reply, _usage, turns_data = _arm_a.run(
-            agent_name="payments-agent", user=user, turns=[task],
-            mcp_url=mcp_url, bearer_token=tool_server_token,
-            model=model, use_gateway=use_gateway,
-        )
-    elif approach == "2":
-        _arm_c = _il.import_module("arm" + "s.c_hoo" + "k.agent")
-        reply, _usage, turns_data = _arm_c.run(
-            agent_name="payments-agent", user=user, turns=[task],
-            mcp_url=mcp_url, bearer_token=tool_server_token,
-            model=model, use_gateway=use_gateway,
-        )
-    elif approach == "3":
-        gen_num = int(gen.replace("gen-", "")) if gen else 1
-        _arm3 = _il.import_module("arm" + "s.approach3.agent")
-        reply, _usage, turns_data = _arm3.run(
-            agent_name="payments-agent", user=user, turns=[task],
-            mcp_url=mcp_url, bearer_token=tool_server_token,
-            model=model, use_gateway=use_gateway, gen=gen_num,
-        )
-    else:
-        reply = "Unknown approach"
-        turns_data = []
-
-    return reply, turns_data
-
-
-async def _handle_a2a_internal(request: Request) -> JSONResponse:
-    """Handle A2A internally — identity already verified by caller."""
-    global _last_transcript
-    auth = request.headers.get("authorization", "")
-    deleg_tok_str = auth[7:] if auth.startswith("Bearer ") else ""
-
-    claims = tokens.verify_bearer(deleg_tok_str, audience="payments-agent")
-    user = claims.get("sub", "")
-    caller = tokens.claims_to_caller(claims)
-
-    body = await request.json()
-    msg = body.get("params", {}).get("message", {})
-    texts = [p["text"] for p in msg.get("parts", []) if p.get("kind") == "text"]
-    task = " ".join(texts)
-
-    from domain.scopes import TOOL_SCOPE_MAP as _tsm
-    pa_scope = [_tsm["pay_vendor"], _tsm["approve_expense"]]
-    pa_tok = tokens.issue_agent_token(
-        sub="payments-agent", aud=tokens.USER_ISSUER, scope=pa_scope,
-    )
-    tool_tok = tokens.exchange(
-        subject_token=deleg_tok_str, actor_token=pa_tok,
-        audience=tokens.SERVER_AUDIENCE,
-    )
-
-    approach = os.environ.get("PAYMENTS_AGENT_APPROACH", "1")
-    gen = os.environ.get("PAYMENTS_AGENT_GEN", "gen-1")
-    use_gateway = os.environ.get("GATEWAY") == "true"
-
-    reply, turns_data = await asyncio.to_thread(
-        _run_payments_agent, task, tool_tok, user, approach, gen, use_gateway,
-    )
-
-    approach_label = approach
-    if approach in ("1", "4", "5", "6"):
-        import importlib as _il2
-        _arm_a2 = _il2.import_module("arm" + "s.a_guides.agent")
-        sys_prompt = _arm_a2.build_system_prompt("payments-agent", user=user)
-    else:
-        from domain.identity import identity_paragraph
-        sys_prompt = identity_paragraph("payments-agent", user)
-
-    _last_transcript = {"system_prompt": sys_prompt, "turns": turns_data}
-
-    return JSONResponse({
-        "jsonrpc": "2.0",
-        "id": body.get("id"),
-        "result": {
-            "message": {
-                "messageId": str(uuid.uuid4()),
-                "role": "agent",
-                "parts": [{"kind": "text", "text": reply}],
-            },
-        },
-    })
-
-
-@mcp.custom_route("/a2a/payments-agent", methods=["POST"])
-async def _a2a_route(request: Request) -> JSONResponse:
-    call_id = str(uuid.uuid4())
-    caller: dict = {"user": None, "agent": None}
-
-    from domain import gateway as _gw
-    if _gw.is_active():
-        decision = {"decision": "deny", "rule": "GATEWAY_BYPASS",
-                     "reason": "gateway mode active; use /gateway/a2a/payments-agent"}
-        _decision_line(call_id, caller, "ask_payments_agent", {}, decision)
-        _outcome_line(call_id, executed=False, error=decision["reason"])
-        return JSONResponse({
-            "jsonrpc": "2.0", "id": None,
-            "error": {"code": -32000, "message": "GATEWAY_BYPASS"},
-        }, status_code=403)
-
-    auth = request.headers.get("authorization", "")
-    if not auth.startswith("Bearer "):
-        decision = {"decision": "deny", "rule": "IDENTITY", "reason": "missing Bearer token"}
-        _decision_line(call_id, caller, "ask_payments_agent", {}, decision)
-        _outcome_line(call_id, executed=False, error="missing Bearer token")
-        return JSONResponse({
-            "jsonrpc": "2.0", "id": None,
-            "error": {"code": -32003, "message": "missing Bearer token"},
-        }, status_code=401)
-
-    try:
-        claims = tokens.verify_bearer(auth[7:], audience="payments-agent")
-    except Exception as exc:
-        decision = {"decision": "deny", "rule": "IDENTITY", "reason": str(exc)}
-        _decision_line(call_id, caller, "ask_payments_agent", {}, decision)
-        _outcome_line(call_id, executed=False, error=str(exc))
-        return JSONResponse({
-            "jsonrpc": "2.0", "id": None,
-            "error": {"code": -32003, "message": str(exc)},
-        }, status_code=401)
-
-    caller = tokens.claims_to_caller(claims)
-    decision = {"decision": "allow", "rule": "IDENTITY", "reason": "valid delegation token"}
-    _decision_line(call_id, caller, "ask_payments_agent", {}, decision)
-    _outcome_line(call_id, executed=True, error=None)
-
-    return await _handle_a2a_internal(request)
-# --- GATEWAY END ---
-
-
-# --- GATEWAY BEGIN ---
 @mcp.custom_route("/central/decide", methods=["POST"])
 async def _central_decide_route(request: Request) -> JSONResponse:
     from domain import gateway as _gw
@@ -836,27 +606,10 @@ async def _central_decide_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
-@mcp.custom_route("/gateway/mcp", methods=["POST", "GET", "DELETE"])
-async def _gateway_mcp_route(request: Request):
-    if request.method == "POST":
-        from domain import gateway
-        return await gateway.handle_mcp(request)
-    if request.method == "DELETE":
-        return JSONResponse({"ok": True})
-    from starlette.responses import StreamingResponse
-
-    async def _sse_keepalive():
-        yield "event: endpoint\ndata: /gateway/mcp\n\n"
-        while True:
-            await asyncio.sleep(3600)
-
-    return StreamingResponse(_sse_keepalive(), media_type="text/event-stream")
-
-
-@mcp.custom_route("/gateway/a2a/payments-agent", methods=["POST"])
-async def _gateway_a2a_route(request: Request) -> JSONResponse:
+@mcp.custom_route("/gateway/mcp", methods=["POST"])
+async def _gateway_mcp_route(request: Request) -> JSONResponse:
     from domain import gateway
-    return await gateway.handle_a2a(request)
+    return await gateway.handle_mcp(request)
 # --- GATEWAY END ---
 
 # ---------------------------------------------------------------------------

@@ -243,7 +243,7 @@ def build_kit(target_dir: pathlib.Path) -> None:
 
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    _copy_domain(_REPO_ROOT / "domain", target_dir / "domain")
+    _copy_domain(_KIT_SNAPSHOT / "domain", target_dir / "domain")
 
     _copy_agent_configs(
         _KIT_SNAPSHOT / "config" / "agents",
@@ -253,12 +253,12 @@ def build_kit(target_dir: pathlib.Path) -> None:
     tests_dst = target_dir / "tests"
     tests_dst.mkdir(exist_ok=True)
     (tests_dst / "__init__.py").write_text("", encoding="utf-8")
-    shutil.copy2(_APPROACH3 / "_contract_tests.py", tests_dst / "test_contract.py")
+    shutil.copy2(_KIT_SNAPSHOT / "_contract_tests.py", tests_dst / "test_contract.py")
 
     (target_dir / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
     (target_dir / "CLAUDE.md").write_text("Run tests with: uv run pytest\n", encoding="utf-8")
-    shutil.copy2(_APPROACH3 / "spec_input.md", target_dir / "spec_input.md")
-    _copy_policy_md(_REPO_ROOT / "policy.md", target_dir / "policy.md")
+    shutil.copy2(_KIT_SNAPSHOT / "spec_input.md", target_dir / "spec_input.md")
+    _copy_policy_md(_KIT_SNAPSHOT / "policy.md", target_dir / "policy.md")
     shutil.copy2(_KIT_SNAPSHOT / "uv.lock", target_dir / "uv.lock")
 
     hits = _check_forbidden(target_dir)

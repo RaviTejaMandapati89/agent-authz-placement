@@ -1340,3 +1340,44 @@ def test_g12_spec_input_says_use_read_and_search_tools():
         "to inspect library source in ./.venv (G12); "
         f"'read' found={has_read}, 'search' found={has_search}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gen-* integrity: every file must match its manifest hash
+# ---------------------------------------------------------------------------
+
+def test_gen_files_match_manifest_hashes():
+    """Every file listed in each gen-N manifest.json must match its sha256 hash.
+
+    The gen-* directories are sealed evidence of generation runs. Any mismatch
+    means a file was edited after the fact, which is prohibited by the project
+    rules.
+    """
+    import hashlib
+
+    gen_dirs = sorted(_APPROACH3.glob("gen-*"))
+    assert gen_dirs, "no gen-* directories found under arms/approach3"
+
+    mismatches: list[str] = []
+    for gen_dir in gen_dirs:
+        manifest_path = gen_dir / "manifest.json"
+        assert manifest_path.exists(), f"{gen_dir.name}/manifest.json missing"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for rel, expected in manifest.items():
+            if not (isinstance(expected, str) and len(expected) == 64):
+                continue
+            p = gen_dir / rel
+            if not p.exists():
+                mismatches.append(f"{gen_dir.name}/{rel}: file missing")
+            else:
+                actual = hashlib.sha256(p.read_bytes()).hexdigest()
+                if actual != expected:
+                    mismatches.append(
+                        f"{gen_dir.name}/{rel}: hash mismatch "
+                        f"(expected {expected[:12]}…, got {actual[:12]}…)"
+                    )
+
+    assert not mismatches, (
+        f"{len(mismatches)} manifest hash failure(s) — a gen-* file was edited:\n"
+        + "\n".join(mismatches)
+    )

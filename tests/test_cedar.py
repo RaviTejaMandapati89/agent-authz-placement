@@ -398,11 +398,18 @@ def _read_decisions(log_path: str, run_type: str = "decision") -> list[dict]:
     p = pathlib.Path(log_path)
     if not p.exists():
         return []
-    return [
-        json.loads(line)
-        for line in p.read_text(encoding="utf-8").splitlines()
-        if line.strip() and json.loads(line).get("type") == run_type
-    ]
+    result = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        if run_type == "decision":
+            if "decision" in entry and "tool" in entry:
+                result.append(entry)
+        else:
+            if entry.get("type") == run_type:
+                result.append(entry)
+    return result
 
 
 @pytest.mark.integration
