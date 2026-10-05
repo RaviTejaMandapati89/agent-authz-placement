@@ -127,6 +127,29 @@ def _apply_control(base_url: str, step: dict) -> None:
     resp.raise_for_status()
 
 
+def _app_expense_call(base_url: str, user: str, args: dict) -> dict:
+    """Send one expense through the non-agent app channel (POST /app/expenses)
+    with a plain user token for the app audience. Returns status and body."""
+    r = httpx.post(f"{base_url}/control/identity/user-token", json={
+        "sub": user, "aud": "expenses-app", "scope": ["expenses:submit"],
+    })
+    r.raise_for_status()
+    resp = httpx.post(
+        f"{base_url}/app/expenses", json=args,
+        headers={"Authorization": f"Bearer {r.json()['access_token']}"},
+    )
+    return {"status": resp.status_code, "body": resp.json()}
+
+
+def _apply_step(base_url: str, user: str, step: dict) -> None:
+    """A between-turns step is either a control action or an app-channel
+    request (`channel: app`, with `args`)."""
+    if step.get("channel") == "app":
+        _app_expense_call(base_url, step.get("user", user), step.get("args", {}))
+    else:
+        _apply_control(base_url, step)
+
+
 def _apply_policy_change_server(base_url: str, change: dict) -> None:
     if "expense_limit" in change:
         resp = httpx.post(
@@ -490,7 +513,7 @@ def run_one(
                 nonlocal between_turns_ts
                 between_turns_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 for step in between_turn_steps:
-                    _apply_control(base_url, step)
+                    _apply_step(base_url, user, step)
 
             # S8 fault: bring the appropriate decision point down before the agent starts.
             fault = scenario.get("fault") or {}

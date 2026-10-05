@@ -146,6 +146,7 @@ def _gw_decision_line(
         "type": "decision",
         "call_id": call_id,
         "layer": "gateway",
+        "channel": "agent",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "sim_time": simclock.now(),
         "user": caller.get("user"),

@@ -836,6 +836,116 @@ async def _central_decide_route(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+_APP_AUDIENCE = "expenses-app"
+
+# Set by tests (ASGITransport) or left None: in normal operation the app
+# channel makes a real HTTP call to this server's own /central/decide.
+_app_central_transport: Any = None
+
+
+def _app_decision_line(call_id: str, user: str | None, arguments: dict,
+                       decision: dict) -> None:
+    _append({
+        "type": "decision",
+        "call_id": call_id,
+        "layer": "gateway",
+        "channel": "app",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "sim_time": simclock.now(),
+        "user": user,
+        "agent": None,
+        "tool": "submit_expense",
+        "arguments": arguments,
+        "decision": decision["decision"],
+        "rule": decision.get("rule"),
+        "reason": decision.get("reason", ""),
+        "central_called": decision.get("central_called", False),
+        "central_duration_ms": 0,
+    })
+
+
+@mcp.custom_route("/app/expenses", methods=["POST"])
+async def _app_expenses_route(request: Request) -> JSONResponse:
+    """Non-agent channel: the company expenses web app, user token only."""
+    from domain import gateway as _gw
+    from domain.scopes import TOOL_SCOPE_MAP
+    if not _gw.is_active():
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    call_id = str(uuid.uuid4())
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    arguments = {
+        "amount": body.get("amount", 0),
+        "description": body.get("description", ""),
+    }
+    if body.get("receipt_id"):
+        arguments["receipt_id"] = body["receipt_id"]
+    if body.get("approval_ref"):
+        arguments["approval_ref"] = body["approval_ref"]
+
+    def _refuse(user: str | None, rule: str, reason: str) -> JSONResponse:
+        _app_decision_line(call_id, user, arguments,
+                           {"decision": "deny", "rule": rule, "reason": reason})
+        return JSONResponse({"error": reason, "rule": rule}, status_code=403)
+
+    auth = request.headers.get("authorization")
+    if not auth or not auth.startswith("Bearer "):
+        return _refuse(None, "IDENTITY", "missing Bearer token")
+    try:
+        claims = tokens.verify_user_bearer(auth[7:], audience=_APP_AUDIENCE)
+    except Exception as exc:
+        return _refuse(None, "IDENTITY", str(exc))
+
+    # identity comes only from the token
+    user = canonicalise(claims.get("sub", ""))
+    arguments["claimant"] = user
+
+    required = TOOL_SCOPE_MAP["submit_expense"]
+    if required not in set(claims.get("scope", "").split()):
+        return _refuse(user, "SCOPE", f"missing scope {required!r}")
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(
+            transport=_app_central_transport,
+            base_url=str(request.base_url),
+        ) as client:
+            r = await client.post("/central/decide", json={
+                "user": user, "tool": "submit_expense", "arguments": arguments,
+            })
+        if r.status_code == 200:
+            result = r.json()
+        else:
+            result = {"decision": "deny", "rule": "CENTRAL_UNAVAILABLE",
+                      "reason": f"central service returned HTTP {r.status_code}"}
+    except Exception as exc:
+        result = {"decision": "deny", "rule": "CENTRAL_UNAVAILABLE",
+                  "reason": f"central service unreachable: {exc}"}
+    _app_decision_line(call_id, user, arguments, {**result, "central_called": True})
+    if result["decision"] != "allow":
+        return JSONResponse(
+            {"error": result.get("reason", ""), "rule": result.get("rule")},
+            status_code=403,
+        )
+    try:
+        expense = execute_tool("submit_expense", arguments, {"user": user})
+    except Exception as exc:
+        _append({"type": "outcome", "call_id": call_id, "executed": False,
+                 "error": str(exc),
+                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                 "sim_time": simclock.now()})
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    _append({"type": "outcome", "call_id": call_id, "executed": True, "error": None,
+             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+             "sim_time": simclock.now()})
+    return JSONResponse({"expense": expense})
+
+
 @mcp.custom_route("/gateway/mcp", methods=["POST", "GET", "DELETE"])
 async def _gateway_mcp_route(request: Request):
     if request.method == "POST":

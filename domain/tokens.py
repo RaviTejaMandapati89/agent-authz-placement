@@ -179,6 +179,16 @@ def verify_bearer(token: str, audience: str = SERVER_AUDIENCE, check_expiry: boo
     return claims
 
 
+def verify_user_bearer(token: str, audience: str, check_expiry: bool = True) -> dict:
+    """Verify a plain USER Bearer token (no act claim). Used by non-agent app channels."""
+    claims = _verify_one(token, audience=audience, check_expiry=check_expiry)
+    if "act" in claims:
+        raise jwt.InvalidTokenError(
+            "act claim present — this endpoint requires a user token, not an agent token"
+        )
+    return claims
+
+
 def _hop_count(claims: dict) -> int:
     depth, act = 0, claims.get("act")
     while act:
