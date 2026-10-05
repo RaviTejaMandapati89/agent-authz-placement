@@ -5,3 +5,4 @@ __pycache__/
 results/dev-*/
 results/*
 !results/.gitkeep
+.claude/settings.local.json
