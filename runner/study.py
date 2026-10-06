@@ -592,12 +592,12 @@ def run_scenario(
     (run_dir / "ledger.json").write_text(json.dumps(ledger))
     logs = grader.load_logs(ledger, server_log, hook_log, issuer_log)
     graded = grader.grade_run(scenario, logs, approach)
-    usage = flow_out.get("usage") or {}
     row.update({
         **graded,
         "completed": graded["legitimate_completed"] is True,
-        "input_tokens": usage.get("input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
+        # Every model call of the run, the server's agents included (one source).
+        "input_tokens": model_usage["input_tokens"],
+        "output_tokens": model_usage["output_tokens"],
         "aborted_by_checkpoint": bool(flow_out.get("aborted_by_checkpoint")),
         "metrics": _metrics(approach, scenario, logs, flow_out),
     })

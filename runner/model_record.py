@@ -13,12 +13,17 @@ by the payments-agent inside the domain server, so one file holds the run.
 import json
 import os
 import pathlib
+import re
 import time
 from typing import Any
 
 from runner import config as cfg
 
 ENV_VAR = "MODEL_CALL_LOG"
+TRANSCRIPT_NAME = "transcript.jsonl"
+# A signed token (three dot-separated base64url parts, or a fragment of one) is
+# never written to a transcript: the repo is public.
+_TOKEN_RE = re.compile(r"eyJ[A-Za-z0-9_\-]*(?:\.[A-Za-z0-9_\-]*){0,2}")
 _THROTTLE_CODES = ("ThrottlingException", "throttlingException", "TooManyRequestsException")
 
 
@@ -42,6 +47,54 @@ def _append(path: pathlib.Path, line: dict) -> None:
         fh.write(json.dumps(line) + "\n")
 
 
+def _append_transcript(path: pathlib.Path, line: dict) -> None:
+    text = _TOKEN_RE.sub("[token removed]", json.dumps(line, default=str))
+    with pathlib.Path(path).open("a", encoding="utf-8") as fh:
+        fh.write(text + "\n")
+
+
+def _last_message(messages) -> dict | None:
+    """The newest message of the request: the user's turn, or the tool results
+    the previous response asked for."""
+    try:
+        return messages[-1] if messages else None
+    except (TypeError, KeyError, IndexError):
+        return None
+
+
+class _Response:
+    """What one streamed response said: its text, its tool calls, why it stopped."""
+
+    def __init__(self) -> None:
+        self.text: list[str] = []
+        self.tools: list[dict] = []
+        self.stop_reason: str | None = None
+
+    def add(self, event: dict) -> None:
+        start = (event.get("contentBlockStart") or {}).get("start") or {}
+        if "toolUse" in start:
+            self.tools.append({"name": start["toolUse"].get("name"), "_input": []})
+        delta = (event.get("contentBlockDelta") or {}).get("delta") or {}
+        if "text" in delta:
+            self.text.append(delta["text"])
+        if "toolUse" in delta and self.tools:
+            self.tools[-1]["_input"].append(delta["toolUse"].get("input") or "")
+        stop = (event.get("messageStop") or {}).get("stopReason")
+        if stop:
+            self.stop_reason = stop
+
+    def tool_uses(self) -> list[dict]:
+        out = []
+        for t in self.tools:
+            raw = "".join(t["_input"])
+            try:
+                arguments = json.loads(raw) if raw else {}
+            except ValueError:
+                arguments = {"unparsed": raw}
+            out.append({"name": t["name"], "input": arguments})
+        return out
+
+
 class RecordingModel:
     """A Strands-compatible model that records each request and delegates it.
 
@@ -56,6 +109,8 @@ class RecordingModel:
         self._source = source
         self._pinned = pinned
         self._hooked = False
+        self._transcript = self._log.with_name(TRANSCRIPT_NAME)
+        self._calls = 0
 
     @property
     def inner(self) -> Any:
@@ -110,9 +165,17 @@ class RecordingModel:
             line.update(outcome="id_mismatch", latency_ms=0)
             _append(self._log, line)
             raise ModelIdMismatch(sent, self._pinned)
+        response = _Response()
+        self._calls += 1
+        turn = {"type": "transcript", "source": self._source, "pid": os.getpid(),
+                "call": self._calls, "ts": line["ts"], "last_message": _last_message(messages)}
+        if self._calls == 1:
+            turn["system_prompt"] = system_prompt
         t0 = time.monotonic()
         try:
             async for event in inner.stream(messages, tool_specs, system_prompt, **kwargs):
+                if isinstance(event, dict):
+                    response.add(event)
                 usage = (event.get("metadata") or {}).get("usage") if isinstance(event, dict) else None
                 if usage:
                     line["input_tokens"] = usage.get("inputTokens") or 0
@@ -128,6 +191,9 @@ class RecordingModel:
         finally:
             line["latency_ms"] = round((time.monotonic() - t0) * 1000, 1)
             _append(self._log, line)
+            turn.update(text="".join(response.text), tool_uses=response.tool_uses(),
+                        stop_reason=response.stop_reason, outcome=line["outcome"])
+            _append_transcript(self._transcript, turn)
 
     stream.__wrapped__ = True
 
