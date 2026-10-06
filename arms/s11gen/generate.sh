@@ -17,7 +17,12 @@ UC=$2
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MODEL="global.anthropic.claude-sonnet-4-6"
-TOOLS="Read(./**),Write(./policy.cedar)"
+# Permission rules (Claude Code 2.1.286 docs): "Edit rules apply to all built-in tools that edit
+# files" and "If you write a path rule for Write ... Claude Code accepts the rule but never consults
+# it", so the one writable file is an Edit rule. "path or ./path: relative to current directory".
+ALLOW="Read(./**),Edit(./policy.cedar)"
+# --tools restricts the built-in tool set: the model gets Read and Write and nothing else.
+TOOL_SET="Read,Write"
 # Provider route: Bedrock, as approach 3's generations ran. Region is not a secret;
 # credentials come from the owner's own AWS configuration and are never set here.
 AWS_REGION_FOR_CALL="${S11_AWS_REGION:-us-west-2}"
@@ -53,39 +58,71 @@ set +e
     export CLAUDE_CODE_USE_BEDROCK=1
     export AWS_REGION="$AWS_REGION_FOR_CALL"
     cat prompt.md | claude --print --output-format stream-json --verbose \
-        --model "$MODEL" --allowedTools "$TOOLS"
+        --model "$MODEL" --tools "$TOOL_SET" --allowedTools "$ALLOW" \
+        --permission-prompts none
 ) > "$LOG"
 CODE=$?
 set -e
 END_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 set +e
-python3 - "$META" "$PAIR" "$UC" "$MODEL" "$TOOLS" "$CLAUDE_VERSION" "$START_TIME" "$END_TIME" "$CODE" \
-    "$AWS_REGION_FOR_CALL" "$LOG" <<'PYEOF'
+python3 - "$META" "$PAIR" "$UC" "$MODEL" "$ALLOW" "$CLAUDE_VERSION" "$START_TIME" "$END_TIME" "$CODE" \
+    "$AWS_REGION_FOR_CALL" "$LOG" "$WS" "$TOOL_SET" <<'PYEOF'
 import json, pathlib, sys
-meta, pair, uc, model, tools, version, start, end, code, region, log = sys.argv[1:]
+meta, pair, uc, model, tools, version, start, end, code, region, log, ws, tool_set = sys.argv[1:]
 result = None
+models = set()
+offered = None
+denials = []
+canon = lambda name: name.split("anthropic.")[-1]   # global.anthropic.X and X are one model
 for line in pathlib.Path(log).read_text().splitlines():
     try:
         event = json.loads(line)
     except ValueError:
         continue
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        offered = event.get("tools")
+        if event.get("model"):
+            models.add(event["model"])
+    if event.get("type") == "assistant" and (event.get("message") or {}).get("model"):
+        models.add(event["message"]["model"])
     if event.get("type") == "result":
         result = event
+        models.update((event.get("modelUsage") or {}).keys())
+        denials = [{"tool_name": d.get("tool_name"),
+                    "path": (d.get("tool_input") or {}).get("file_path")}
+                   for d in event.get("permission_denials") or []]
 is_error = result is None or bool(result.get("is_error"))
+policy = pathlib.Path(ws) / "policy.cedar"
+wrong_models = sorted(m for m in models if canon(m) != canon(model))
+extra_tools = sorted(set(offered or []) - set(tool_set.split(",")))
+problems = []
+if result is None:
+    problems.append(f"the stream has no result line ({log})")
+elif is_error:
+    problems.append(f"the stream's result is an error: {str(result.get('result'))[:500]} ({log})")
+if not policy.is_file() or not policy.read_text().strip():
+    problems.append(f"policy.cedar is missing or empty ({policy})")
+if denials:
+    problems.append(f"permission denials: {denials}")
+if wrong_models:
+    problems.append(f"replies from a model other than the pinned {model}: {wrong_models}")
+if extra_tools:
+    problems.append(f"tools offered beyond {tool_set}: {extra_tools}")
 pathlib.Path(meta).write_text(json.dumps({
     "pair": int(pair), "use_case": uc, "model": model,
     "provider": "bedrock", "aws_region": region,
     "settings": {"command": "claude --print", "output_format": "stream-json",
-                 "allowed_tools": tools, "claude_code_version": version},
+                 "tools": tool_set, "allowed_tools": tools, "permission_prompts": "none",
+                 "claude_code_version": version},
     "start_time": start, "end_time": end, "exit_code": int(code),
     "result_is_error": is_error,
+    "models_answered": sorted(models), "permission_denials": denials,
+    "tools_offered": offered, "failures": problems,
 }, indent=2) + "\n")
-if result is None:
-    print(f"FAILED: the stream has no result line ({log})", file=sys.stderr)
-elif is_error:
-    print(f"FAILED: the stream's result is an error: {str(result.get('result'))[:500]} ({log})", file=sys.stderr)
-sys.exit(3 if is_error else 0)
+for p in problems:
+    print(f"FAILED: {p}", file=sys.stderr)
+sys.exit(3 if problems else 0)
 PYEOF
 RESULT_CODE=$?
 set -e

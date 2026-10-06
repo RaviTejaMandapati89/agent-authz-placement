@@ -17,6 +17,7 @@ SECRET = "test-secret-value-must-never-appear"
 _FAKE = """#!/usr/bin/env bash
 if [[ "${1:-}" == "--version" ]]; then echo "9.9.9 (Claude Code)"; exit 0; fi
 cat > /dev/null
+echo 'permit(principal, action, resource);' > policy.cedar
 echo "BEDROCK=${CLAUDE_CODE_USE_BEDROCK:-unset} REGION=${AWS_REGION:-unset}" >> "$FAKE_ENV_LOG"
 echo '{"type":"system","subtype":"init"}'
 echo '%s'

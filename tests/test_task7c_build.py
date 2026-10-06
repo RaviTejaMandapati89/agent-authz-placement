@@ -274,4 +274,6 @@ def test_generate_script_is_valid_and_rejects_bad_arguments_before_doing_anythin
 def test_generate_script_allows_one_model_call_with_only_read_and_the_policy_write():
     text = (REPO / "arms" / "s11gen" / "generate.sh").read_text()
     assert text.count("| claude --print") == 1   # one call, piped from the prompt
-    assert 'TOOLS="Read(./**),Write(./policy.cedar)"' in text
+    assert 'ALLOW="Read(./**),Edit(./policy.cedar)"' in text
+    assert 'TOOL_SET="Read,Write"' in text
+    assert "Write(./policy.cedar)" not in text.replace("Edit(./policy.cedar)", "").split("ALLOW=")[1].split("\n")[0]
