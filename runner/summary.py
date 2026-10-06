@@ -102,6 +102,13 @@ def _summarise_group(rows: list[dict]) -> dict:
         out["change_cost"] = ms[0]["change_cost"]
     if "failure_behaviour" in ms[0]:
         out["failure_behaviour"] = dict(collections.Counter(m["failure_behaviour"] for m in ms))
+    if "s11" in ms[0]:
+        out["s11_pairs"] = {"passed": sum(1 for m in ms if m["s11"]["pair_passes"]), "of": len(ms)}
+        names = list(ms[0]["s11"]["cases"])
+        out["s11_rules"] = {n: dict(collections.Counter(str(m["s11"]["cases"][n]["rule"]) for m in ms))
+                            for n in names}
+        out["s11_labelling_findings"] = {n: sum(1 for m in ms if n in m["s11"]["labelling_findings"])
+                                         for n in names}
     if "chains" in ms[0]:
         out["chains"] = {
             "refusing_hop": dict(collections.Counter(str(m["chains"]["refusing_hop"]) for m in ms)),
@@ -138,6 +145,12 @@ def summarise(rows: list[dict]) -> list[dict]:
         if r["approach"] == 3:
             combined[(3, "all", r["scenario"], r.get("variant"))].append({**r, "generation": "all"})
     out.extend(_summarise_group(g) for g in combined.values())
+    # S11: the five generated pairs combined
+    pairs: dict[tuple, list[dict]] = collections.defaultdict(list)
+    for r in rows:
+        if r["scenario"] == "S11" and r.get("variant"):
+            pairs[(r["approach"], r.get("generation"), "S11", "all")].append({**r, "variant": "all"})
+    out.extend(_summarise_group(g) for g in pairs.values())
     return out
 
 
@@ -158,6 +171,16 @@ def _designed_counts(graded: list[dict]) -> dict | None:
 
 def _num_text(v) -> str:
     return "none" if v is None else f"{v:g}"
+
+
+def _s11_rules_text(s: dict) -> str:
+    """S11: the refusing rule id per use case, with labelling findings counted."""
+    if not s.get("s11_rules"):
+        return ""
+    return "; ".join(
+        f"{uc}: " + ", ".join(f"{r} x{n}" for r, n in sorted(rules.items()))
+        + (f" ({s['s11_labelling_findings'][uc]} labelling)" if s["s11_labelling_findings"][uc] else "")
+        for uc, rules in s["s11_rules"].items())
 
 
 def _window_text(s: dict) -> str:
@@ -193,8 +216,9 @@ def write_summary(rows: list[dict], out_dir: pathlib.Path) -> list[dict]:
     summary = summarise(rows)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
     lines = ["| approach | gen | scenario | variant | status | runs | errors | verdicts | causes "
-             "| legit work | refusing rule | as designed | person rule held | S5 window |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "| legit work | refusing rule | as designed | person rule held | S5 window | S11 pairs passed "
+             "| S11 rule per use case |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in summary:
         lines.append(
             f"| {s['approach_label']} | {s['generation'] or ''} | {s['scenario']} | "
@@ -202,6 +226,7 @@ def write_summary(rows: list[dict], out_dir: pathlib.Path) -> list[dict]:
             f"{s.get('errors', '')} | {s.get('verdicts', s.get('verdict', ''))} | "
             f"{_causes_text(s)} | {_ratio(s.get('legitimate_work'), 'completed')} | "
             f"{_rules_text(s)} | {_ratio(s.get('rule_as_designed'), 'as_designed')} | "
-            f"{_ratio(s.get('person_rule_held'), 'held')} | {_window_text(s)} |")
+            f"{_ratio(s.get('person_rule_held'), 'held')} | {_window_text(s)} | "
+            f"{_ratio(s.get('s11_pairs'), 'passed')} | {_s11_rules_text(s)} |")
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n")
     return summary

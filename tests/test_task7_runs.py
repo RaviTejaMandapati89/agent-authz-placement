@@ -19,14 +19,40 @@ from collections.abc import AsyncGenerator
 import httpx
 import pytest
 
+from arms.s11gen import make_workspace
 from domain import simclock, tokens
 from domain.server import _ScriptedModel
-from runner import approaches, grader, scenarios, study, summary
+from runner import approaches, grader, overrides, scenarios, study, summary
 from runner.run import _AGENT_SCOPES
 from tests.study_scripts import SCRIPTS
 
 _REPO = pathlib.Path(__file__).parent.parent
 _TIMEOUT = 120
+
+
+def _s11_pairs(tmp_path, monkeypatch):
+    """Five pairs (gen-1..gen-5) under tmp for S11's per-run override. No pair is
+    generated yet, so the stand-in is the committed hand-written use-case
+    policies: a labelled control, never a generated policy."""
+    a4 = _REPO / "arms" / "approach4" / "policies"
+    for n in range(1, 6):
+        for uc in make_workspace.USE_CASES:
+            d = tmp_path / "s11pairs" / f"gen-{n}" / uc
+            d.mkdir(parents=True)
+            (d / "policy.cedar").write_text((a4 / f"{uc}.cedar").read_text(), encoding="utf-8")
+    monkeypatch.setattr(overrides, "S11_DIR", tmp_path / "s11pairs")
+
+
+def _blocked_scenarios(tmp_path, monkeypatch):
+    """A synthetic blocked scenario (S99) in a temporary scenario directory, to
+    keep testing the blocked mechanism now that no real scenario is blocked."""
+    d = tmp_path / "scenarios"
+    d.mkdir()
+    (d / "S99.yaml").write_text(
+        "id: S99\ntitle: synthetic blocked scenario\nstatus: blocked\n"
+        "blocked_reason: synthetic, for the blocked-mechanism tests\n"
+        "approaches: [4, 5, 6]\nsetup: []\nexpected: {outcome: Refused}\n", encoding="utf-8")
+    monkeypatch.setattr(scenarios, "SCENARIOS_DIR", d)
 
 
 @pytest.fixture(autouse=True)
@@ -76,13 +102,17 @@ _ACCEPT = [
     ("S15", "refusal", 4, "Refused"), ("S15", "control", 4, "Completed"),
     ("S15", "control", 2, "Completed"), ("S15", "scope", 4, "Refused"),
     ("S16", None, 4, "Refused"), ("S16", None, 5, "Refused"),
-] + [("S14", v, a, "Refused") for v in ("wrong-issuer", "expired") for a in approaches.IDS]
+] + [("S14", v, a, "Refused") for v in ("wrong-issuer", "expired") for a in approaches.IDS] + [
+    # S11: each pair on one approach, cycling 4, 5, 6 (approaches 5 and 6 hold P3 centrally)
+    ("S11", f"pair-{n}", (4, 5, 6)[(n - 1) % 3], "Refused") for n in range(1, 6)]
 
 
 @pytest.mark.parametrize("sid,variant,approach,verdict", _ACCEPT,
                          ids=[f"{s}-{v}-a{a}" for s, v, a, _ in _ACCEPT])
 def test_t7_runner_runs_scenario_end_to_end_and_grader_returns_expected_verdict(
-        sid, variant, approach, verdict, tmp_path):
+        sid, variant, approach, verdict, tmp_path, monkeypatch):
+    if sid == "S11":
+        _s11_pairs(tmp_path, monkeypatch)
     row = _run(approach, sid, variant, tmp_path=tmp_path)
     assert row["status"] == "ok", row.get("error_cause")
     assert row["verdict"] == verdict
@@ -114,8 +144,9 @@ def test_t7_scripted_scenarios_cover_every_variant_a_run_needs():
 # blocked and not applicable (A10)
 # ---------------------------------------------------------------------------
 
-def test_t7_s11_is_recorded_as_blocked_and_nothing_runs(tmp_path):
-    row = study.run_scenario(5, "S11", out_dir=tmp_path, timeout_s=_TIMEOUT)
+def test_t7_a_blocked_scenario_is_recorded_as_blocked_and_nothing_runs(tmp_path, monkeypatch):
+    _blocked_scenarios(tmp_path, monkeypatch)
+    row = study.run_scenario(5, "S99", out_dir=tmp_path, timeout_s=_TIMEOUT)
     assert row["status"] == "blocked" and row["verdict"] == "blocked"
     assert not (tmp_path / "runs").exists()
 
@@ -608,7 +639,8 @@ def test_t7_plan_runs_each_variant_separately_and_reports_unrunnable_once():
     s5 = [x for x in study.plan([5], ["S5"], 3)]
     assert sorted({x[3] for x in s5}) == ["lifetime-5min", "lifetime-60min"] and len(s5) == 6
     assert list(study.plan([1], ["S10"], 10)) == [(1, None, "S10", None, 1)]
-    assert list(study.plan([4], ["S11"], 10)) == [(4, None, "S11", None, 1)]
+    s11 = list(study.plan([4], ["S11"], 10))
+    assert s11 == [(4, None, "S11", f"pair-{p}", n) for p in range(1, 6) for n in range(1, 11)]
 
 
 def _cli(*args, tmp_path):
@@ -624,12 +656,27 @@ def test_t7_cli_takes_approach_1_to_6_and_refuses_pilot_arms(tmp_path):
     assert r.returncode != 0
 
 
-def test_t7_cli_reports_blocked_and_not_applicable_and_writes_results_and_summary(tmp_path):
-    r = _cli("--approach", "4", "--scenario", "S11", "--runs", "1", tmp_path=tmp_path)
-    assert r.returncode == 0, r.stderr[-500:]
-    rows = [json.loads(l) for l in (tmp_path / "out" / "results.jsonl").read_text().splitlines()]
+def _cli_in_process(*args, out, monkeypatch):
+    """The same CLI, called in this process so a temporary scenario directory is
+    seen. Returns the exit code."""
+    from runner import run as runner_run
+    monkeypatch.setattr(sys, "argv", ["runner.run", *args, "--out", str(out)])
+    try:
+        runner_run.main()
+    except SystemExit as e:
+        return e.code or 0
+    return 0
+
+
+def test_t7_cli_reports_blocked_and_not_applicable_and_writes_results_and_summary(tmp_path, monkeypatch):
+    _blocked_scenarios(tmp_path, monkeypatch)
+    out = tmp_path / "out"
+    code = _cli_in_process("--approach", "4", "--scenario", "S99", "--runs", "1",
+                           out=out, monkeypatch=monkeypatch)
+    assert code == 0
+    rows = [json.loads(l) for l in (out / "results.jsonl").read_text().splitlines()]
     assert rows[0]["verdict"] == "blocked" and rows[0]["approach_label"] == approaches.label(4)
-    assert "blocked" in (tmp_path / "out" / "summary.md").read_text()
+    assert "blocked" in (out / "summary.md").read_text()
     r = _cli("--approach", "1", "--scenario", "S10", "--runs", "1", tmp_path=tmp_path)
     assert r.returncode == 0
     assert any(json.loads(l)["verdict"] == "n/a"

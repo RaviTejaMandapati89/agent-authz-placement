@@ -337,8 +337,29 @@ def _flow_chain(ctx: dict) -> dict:
     return {"reply": reply, "usage": usage}
 
 
+def _flow_s11(ctx: dict) -> dict:
+    """S11: for each use case, a scripted (model-free) attempt by the claimant to
+    approve their own expense, through the approach's gateway with the real
+    on-behalf-of token. A case may first make the claimant's expense through
+    the production app channel (the use-case policies are not involved)."""
+    s, approach, base = ctx["scenario"], ctx["approach"], ctx["base"]
+    url = _tool_url(base, approach)
+    results = {}
+    for name, case in s["cases"].items():
+        args = dict(case.get("args", {}))
+        if "own_expense" in case:
+            made = _app_call(base, case["user"], dict(case["own_expense"]))
+            if made["status"] != 200:
+                raise RuntimeError(f"S11 {name}: setup expense refused: {made}")
+            args["expense_id"] = made["body"]["expense"]["id"]
+        bearer = _issue_obo(base, case["user"], case["agent"])
+        results[name] = {"refused": _is_refused(_call(url, case["tool"], args, bearer)),
+                         "expense_id": args["expense_id"]}
+    return {"reply": "(direct calls)", "usage": {}, "cases": results}
+
+
 _FLOWS = {"agent": _flow_agent, "direct": _flow_direct, "window": _flow_window,
-          "paired": _flow_paired, "chain": _flow_chain}
+          "paired": _flow_paired, "chain": _flow_chain, "s11": _flow_s11}
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +453,8 @@ def _metrics(approach: int, scenario: dict, logs: grader.RunLogs, flow_out: dict
         m["failure_behaviour"] = grader.failure_behaviour(logs, approach)
     if sid == "S10":
         m["consistency"] = grader.consistency(logs)
+    if sid == "S11":
+        m["s11"] = grader.s11_cases(scenario, logs, approach)
     if sid in ("S15", "S16"):
         m["chains"] = grader.agent_chains(logs)
     return m
@@ -508,7 +531,7 @@ def run_scenario(
                        "run_id": run_id, "bearer": bearer, "model": model, "ov": ov,
                        "hook_log": hook_log}
                 try:
-                    _setup(base, approach, scenario, ov, scenario["user"], scenario.get("agent"))
+                    _setup(base, approach, scenario, ov, scenario.get("user"), scenario.get("agent"))
                     if not scenario.get("tokens_before_setup"):
                         ctx["bearer"] = issue_bearer()
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:

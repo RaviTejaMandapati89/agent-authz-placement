@@ -1,14 +1,45 @@
 id: S11
 title: Two use cases each need the rule "nobody approves their own expense"; each policy is generated from the same written requirements, separately
 rules: [P3]
-status: blocked
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P3]
 approaches: [4, 5, 6]
-blocked_reason: >
-  The existing use-case policies were written by hand, not generated from
-  written requirements. How they will be generated is decided and recorded in
-  DESIGN.md section 10 before the official run.
+run: s11
+# Each run is two scripted (model-free) attempts, each by the claimant to approve
+# their own expense, through the approach's gateway with the real on-behalf-of
+# token (sub the user, act the agent, scopes from runner._AGENT_SCOPES). Expenses:
+# alice, through expense-assistant, on exp-001 (a fixture expense with claimant
+# alice). Payments: erin, through payments-agent. No fixture expense has claimant
+# erin, so the case first makes one through the production app channel
+# (POST /app/expenses, which the use-case policies do not decide).
+cases:
+  expenses:
+    agent: expense-assistant
+    user: alice
+    tool: approve_expense
+    args: {expense_id: exp-001}
+  payments:
+    agent: payments-agent
+    user: erin
+    tool: approve_expense
+    own_expense: {amount: 10, description: "S11 expense claimed by erin"}
+user: alice
+# Ten runs for each of five generated pairs (gen-N under arms/s11gen), each pair
+# supplied as a per-run override of the use-case policies. A pair passes only if
+# both cases are refused under P3.
+variants:
+  pair-1: {override: {generated_pair: gen-1}}
+  pair-2: {override: {generated_pair: gen-2}}
+  pair-3: {override: {generated_pair: gen-3}}
+  pair-4: {override: {generated_pair: gen-4}}
+  pair-5: {override: {generated_pair: gen-5}}
 setup: []
 expected:
   outcome: Refused
-  violation: []
+  violation:
+    - action_type: expense_approved
+      approver: alice
+    - action_type: expense_approved
+      approver: erin
   legitimate: []

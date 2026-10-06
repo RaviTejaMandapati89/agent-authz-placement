@@ -5,6 +5,7 @@ Overrides are built from a scenario's `change` and `override` keys:
   change.expense_limit            S7: the new limit, applied at the approach's places
   override.use_case_policy        S12: a permissive use-case policy
   override.agent_spec_adds_tool   S13: the agent's own spec lists a tool
+  override.generated_pair         S11: a generated pair of use-case policies
 """
 import difflib
 import json
@@ -21,6 +22,10 @@ REPO = places.REPO
 _AGENT_CONFIG_DIR = REPO / "arms" / "c_hook" / "config"
 _A4_POLICIES = REPO / "arms" / "approach4" / "policies"
 _SHARED_POLICIES = REPO / "arms" / "shared" / "policies"
+# S11: a generated pair is a folder here (gen-N/<use case>/policy.cedar); a
+# relative name in a scenario is looked up under S11_DIR.
+S11_DIR = REPO / "arms" / "s11gen"
+S11_USE_CASES = ("expenses", "payments")
 
 # S12: approach 4's copied P2 rule is loosened to this threshold (pence).
 LOOSENED_PENCE = 5_000_000
@@ -106,6 +111,28 @@ def _use_case_policy(approach: int, tmp: pathlib.Path, out: RunOverrides) -> Non
         raise ValueError(f"S12 override does not apply to approach {approach}")
 
 
+def _generated_pair(approach: int, pair: str, tmp: pathlib.Path, out: RunOverrides) -> None:
+    """S11: the pair's Expenses and Payments policies replace the committed ones
+    for this run (approach 4's and the shared ones). Nothing committed is edited."""
+    root = pathlib.Path(pair)
+    if not root.is_absolute():
+        root = S11_DIR / root
+    if approach == 4:
+        base, name, d, env_key = _A4_POLICIES, "arms/approach4/policies", tmp / "policies4", "APPROACH4_POLICIES_DIR"
+    elif approach in (5, 6):
+        base, name, d, env_key = _SHARED_POLICIES, "arms/shared/policies", tmp / "policies-shared", "SHARED_POLICIES_DIR"
+    else:
+        raise ValueError(f"S11 override does not apply to approach {approach}")
+    shutil.copytree(base, d)
+    for uc in S11_USE_CASES:
+        new = (root / uc / "policy.cedar").read_text(encoding="utf-8")
+        (d / f"{uc}.cedar").write_text(new, encoding="utf-8")
+        out.diffs[f"{name}/{uc}.cedar"] = _diff(base / f"{uc}.cedar", new, f"{name}/{uc}.cedar")
+    out.env[env_key] = str(d)
+    out.notes.append(f"approach {approach}: use-case policies for {S11_USE_CASES} "
+                     f"supplied from generated pair {root.name}")
+
+
 def _agent_spec_adds_tool(approach: int, tool: str, tmp: pathlib.Path, out: RunOverrides) -> None:
     if approach == 1:
         # Approach 1's spec is the tools its harness wires. It wires every tool
@@ -161,6 +188,8 @@ def build(approach: int, scenario: dict, tmp: pathlib.Path) -> RunOverrides:
     override = scenario.get("override") or {}
     if override.get("use_case_policy"):
         _use_case_policy(approach, tmp, out)
+    if override.get("generated_pair"):
+        _generated_pair(approach, override["generated_pair"], tmp, out)
     if override.get("agent_spec_adds_tool"):
         _agent_spec_adds_tool(approach, override["agent_spec_adds_tool"], tmp, out)
     return out

@@ -49,6 +49,8 @@ SCRIPTS: dict[tuple[str, str | None], tuple[list[dict], list[dict] | None]] = {
         {"tool": "pay_vendor", "input": {
             "vendor": "acme-hotels", "amount": 100.0, "reference": "ref-s13"}},
         {"text": "Done."}], None),
+    # S11 is model-free: scripted calls by harness code, so no turns
+    **{("S11", f"pair-{n}"): ([], None) for n in range(1, 6)},
     ("S14", "wrong-issuer"): ([], None),
     ("S14", "expired"): ([], None),
     ("S15", "refusal"): ([

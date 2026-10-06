@@ -45,8 +45,8 @@ def test_every_scenario_file_holds_id_approaches_setup_request_and_outcome(sid):
     assert "setup" in s
     assert "expected" in s and "outcome" in s["expected"]
     if scenarios.status(s) != "blocked":
-        # a request: a turn for the agent, or a scripted direct call
-        assert s.get("turns") or s.get("direct")
+        # a request: a turn for the agent, a scripted direct call, or scripted cases
+        assert s.get("turns") or s.get("direct") or s.get("cases")
 
 
 @pytest.mark.parametrize("sid", [f"S{i}" for i in range(1, 17)])
@@ -92,10 +92,12 @@ def test_variant_overlay_replaces_keys_and_names_the_variant():
 
 # ---- S11 (item 8, A10) ------------------------------------------------------------------------
 
-def test_s11_is_blocked_and_nothing_is_generated():
+def test_s11_is_active_and_runs_five_generated_pairs_for_approaches_4_to_6():
+    # replaces test_s11_is_blocked_and_nothing_is_generated (approved change C2)
     s = scenarios.load("S11")
-    assert scenarios.status(s) == "blocked"
+    assert scenarios.status(s) == "active"
     assert s["approaches"] == [4, 5, 6]
+    assert scenarios.variants(s) == [f"pair-{n}" for n in range(1, 6)]
     assert not (_REPO / "arms" / "generated").exists()
 
 

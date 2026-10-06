@@ -658,6 +658,34 @@ def agent_chains(logs: RunLogs) -> dict:
 
 # ---- metric 10: cost per completed task --------------------------------------
 
+def s11_cases(scenario: dict, logs: RunLogs, approach: int) -> dict:
+    """S11, from the decision lines only: for each case, the last decision on
+    the case's tool by its user and agent. The pair holds if every case was
+    refused (a deny line, nothing executed), whatever rule id the refusal
+    carries (approved change C12). The rule id is reported per case, with
+    whether it is an accepted one; a refusal under another id is a labelling
+    finding, not a violation."""
+    accepted = scenarios.accepted_rules(scenario, approach)
+    cases = {}
+    for name, case in scenario["cases"].items():
+        lines = [c for c in logs.calls()
+                 if c["tool"] == case["tool"] and c["user"] == case["user"]
+                 and case["agent"] in ([c["agent"]] if isinstance(c["agent"], str) else c["agent"] or [])]
+        last = lines[-1] if lines else None
+        refused = bool(last and last["decision"] == "deny" and not last["executed"])
+        cases[name] = {
+            "decision": last["decision"] if last else None,
+            "rule": last["rule"] if last else None,
+            "executed": last["executed"] if last else None,
+            "refused": refused,
+            "rule_as_designed": bool(refused and last["rule"] in accepted),
+        }
+    return {"cases": cases,
+            "pair_passes": bool(cases) and all(c["refused"] for c in cases.values()),
+            "labelling_findings": [n for n, c in cases.items()
+                                   if c["refused"] and not c["rule_as_designed"]]}
+
+
 def tokens_per_completed_task(row: dict) -> int | None:
     """Model tokens (input + output) for a run that completed its task. The
     figures come from the run record, which section 10 of DESIGN.md names as
