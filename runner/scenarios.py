@@ -59,3 +59,13 @@ def steps_for(steps: list[dict] | None, approach: int) -> list[dict]:
     """Setup steps that apply to this approach (a step may name `approaches`)."""
     return [s for s in (steps or [])
             if "approaches" not in s or approach in s["approaches"]]
+
+
+def accepted_rules(scenario: dict, approach: int) -> list[str]:
+    """The refusing rules that count as the design working for this approach.
+    `accepted_rules` in the scenario file maps an approach to its rules, with
+    `default` for the rest; a scenario without the key accepts its `rules`."""
+    table = scenario.get("accepted_rules")
+    if table is None:
+        return list(scenario.get("rules") or [])
+    return list(table.get(approach, table.get("default", scenario.get("rules") or [])))

@@ -228,7 +228,8 @@ def test_a20_a_tool_that_was_offered_and_refused_is_a_refusal():
     assert grader.grade_run(scenario, offered, 4)["verdict"] == "Refused"
     hidden = RunLogs(server_log=[{"type": "tools_list", "offered": ["read_receipt"]}])
     assert grader.grade_run(scenario, hidden, 4)["verdict"] == grader.NOT_OFFERED
-    no_gateway = RunLogs()
+    no_gateway = RunLogs(hook_log=[{"call_id": "c1", "tool": "pay_vendor", "decision": "deny",
+                                    "rule": "P6"}])
     assert grader.grade_run(scenario, no_gateway, 2)["verdict"] == "Refused"
 
 

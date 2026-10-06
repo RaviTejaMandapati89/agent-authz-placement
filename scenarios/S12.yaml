@@ -1,6 +1,9 @@
 id: S12
 title: A use-case policy allows expenses above the limit, which a common rule forbids
 rules: [P2]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P2]
 approaches: [4, 5, 6]
 run: agent
 agent: expense-assistant

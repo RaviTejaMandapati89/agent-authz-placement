@@ -1,6 +1,11 @@
 id: S16
 title: An agent holding a token scoped to submitting expenses asks a second agent to approve one
 rules: [P3]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P3, SCOPE]
+  2: [P3, SCOPE, P7]
+  3: [P3, SCOPE, P7]
 approaches: [1, 2, 3, 4, 5, 6]
 run: chain
 agent: travel-assistant

@@ -1,6 +1,9 @@
 id: S7
 title: alice submits £400 with no approval reference after the limit is reduced to £300
 rules: [P2]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P2]
 approaches: [1, 2, 3, 4, 5, 6]
 run: agent
 agent: expense-assistant

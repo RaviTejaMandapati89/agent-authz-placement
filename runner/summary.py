@@ -47,6 +47,22 @@ def _summarise_group(rows: list[dict]) -> dict:
         return out
     verdicts = collections.Counter(r["verdict"] for r in graded)
     out["verdicts"] = dict(verdicts)
+    # a refusal without a logged deny line is never counted as refused (T7-4)
+    for key in ("unattributed_cause", "not_completed_cause"):
+        causes = collections.Counter(r[key] for r in graded if r.get(key))
+        if causes:
+            out[key.replace("_cause", "_causes")] = dict(causes)
+    work = [r["legitimate_work"] for r in graded if r.get("legitimate_work")]
+    out["legitimate_work"] = ({"completed": sum(1 for w in work if w == "completed"),
+                               "of": len(work)} if work else None)
+    rules: collections.Counter = collections.Counter()
+    for r in graded:
+        rules.update(r.get("refusal_rules") or {})
+    out["refusal_rules"] = dict(rules)
+    out["rule_as_designed"] = _designed_counts(graded)
+    person = [r["person_rule_held"] for r in graded if r.get("person_rule_held") is not None]
+    out["person_rule_held"] = ({"held": sum(1 for h in person if h), "of": len(person)}
+                               if person else None)
     out["violation_rate"] = sum(1 for r in graded if r["violated"]) / len(graded)
     legit = [r for r in graded if r["legitimate_completed"] is not None]
     if legit:
@@ -66,6 +82,8 @@ def _summarise_group(rows: list[dict]) -> dict:
                 if m["freshness"].get("last_allowed_s") is not None]
         first = [m["freshness"]["first_refused_s"] for m in ms
                  if m["freshness"].get("first_refused_s") is not None]
+        out["freshness_unplaced_refusals"] = sum(
+            m["freshness"].get("unplaced_refusals", 0) for m in ms)
         out["freshness_bounds_s"] = {"last_allowed": max(last, default=None),
                                      "first_refused": max(first, default=None)}
         rebook = collections.Counter(m["freshness"].get("rebooking") for m in ms
@@ -127,6 +145,17 @@ def _num(sid: str) -> int:
     return int(sid[1:]) if sid[1:].isdigit() else 0
 
 
+def _designed_counts(graded: list[dict]) -> dict | None:
+    """Refusals judged against the accepted rules; "n/a" refusals (legitimate
+    work, where every refusal is false) are counted apart, never as designed."""
+    vals = [r["rule_as_designed"] for r in graded if r.get("rule_as_designed") is not None]
+    judged = [v for v in vals if v != "n/a"]
+    na = len(vals) - len(judged)
+    if not vals:
+        return None
+    return {"as_designed": sum(1 for v in judged if v), "of": len(judged), "not_applicable": na}
+
+
 def _num_text(v) -> str:
     return "none" if v is None else f"{v:g}"
 
@@ -142,16 +171,37 @@ def _window_text(s: dict) -> str:
     return f"last allowed {_num_text(b['last_allowed'])}, first refused {_num_text(b['first_refused'])}"
 
 
+def _ratio(d: dict | None, key: str) -> str:
+    if not d:
+        return ""
+    if key == "as_designed" and d.get("not_applicable"):
+        return (f"{d[key]}/{d['of']}, " if d["of"] else "") + f"n/a x{d['not_applicable']}"
+    return f"{d[key]}/{d['of']}"
+
+
+def _rules_text(s: dict) -> str:
+    return ", ".join(f"{k} x{v}" for k, v in sorted((s.get("refusal_rules") or {}).items()))
+
+
+def _causes_text(s: dict) -> str:
+    parts = [f"{k.replace('_causes', '')}: {c}" for k in ("unattributed_causes", "not_completed_causes")
+             for c in [", ".join(f"{n} x{v}" for n, v in sorted((s.get(k) or {}).items()))] if c]
+    return "; ".join(parts)
+
+
 def write_summary(rows: list[dict], out_dir: pathlib.Path) -> list[dict]:
     summary = summarise(rows)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
-    lines = ["| approach | gen | scenario | variant | status | runs | errors | verdicts | S5 window |",
-             "|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| approach | gen | scenario | variant | status | runs | errors | verdicts | causes "
+             "| legit work | refusing rule | as designed | person rule held | S5 window |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in summary:
         lines.append(
             f"| {s['approach_label']} | {s['generation'] or ''} | {s['scenario']} | "
             f"{s['variant'] or ''} | {s['status']} | {s.get('runs', '')} | "
             f"{s.get('errors', '')} | {s.get('verdicts', s.get('verdict', ''))} | "
-            f"{_window_text(s)} |")
+            f"{_causes_text(s)} | {_ratio(s.get('legitimate_work'), 'completed')} | "
+            f"{_rules_text(s)} | {_ratio(s.get('rule_as_designed'), 'as_designed')} | "
+            f"{_ratio(s.get('person_rule_held'), 'held')} | {_window_text(s)} |")
     (out_dir / "summary.md").write_text("\n".join(lines) + "\n")
     return summary

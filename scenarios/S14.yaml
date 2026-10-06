@@ -1,6 +1,9 @@
 id: S14
 title: A call arrives with a token from the wrong issuer, or an expired one
 rules: [P7]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [IDENTITY]
 approaches: [1, 2, 3, 4, 5, 6]
 run: direct
 agent: expense-assistant

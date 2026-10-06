@@ -1,6 +1,10 @@
 id: S5
 title: dan books for carol; carol revokes the delegation; dan books again while his on-behalf-of token is still valid
 rules: [P4]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P4]
+  4: [P4, IDENTITY]       # approach 4's delegation rides in the token; it refuses when that token expires
 approaches: [1, 2, 3, 4, 5, 6]
 run: window
 agent: travel-assistant

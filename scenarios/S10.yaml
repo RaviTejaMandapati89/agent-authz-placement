@@ -1,6 +1,9 @@
 id: S10
 title: The limit drops centrally; the same £400 request arrives through an agent and through the non-agent channel
 rules: [P2]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P2]
 approaches: [4, 5, 6]
 run: paired
 agent: expense-assistant

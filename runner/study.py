@@ -165,6 +165,9 @@ class CheckpointProbe:
         self._registry = HookRegistry()
         hook.register_hooks(self._registry)
         self._bearer = bearer
+        self._base = base
+        self._hook_log = hook_log
+        self._run_id = run_id
         self._url = f"{base}/mcp"
         client = MCPClient(url=self._url, headers={"Authorization": f"Bearer {bearer}"})
         with client:
@@ -172,10 +175,17 @@ class CheckpointProbe:
 
     def call(self, tool: str, arguments: dict) -> dict:
         from strands.hooks import BeforeToolCallEvent
+        probe_id = f"probe-{uuid.uuid4().hex[:8]}"
+        # The harness's own clock at the probe. The grader joins this line to the
+        # checkpoint's decision line by probe_id (a checkpoint that refuses before
+        # reading the facts store logs no sim_time of its own).
+        with pathlib.Path(self._hook_log).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"type": "probe", "run_id": self._run_id,
+                                 "probe_id": probe_id, "tool": tool,
+                                 "sim_time": _sim_now(self._base)}) + "\n")
         event = BeforeToolCallEvent(
             agent=None, selected_tool=self._tools.get(tool),
-            tool_use={"toolUseId": f"probe-{uuid.uuid4().hex[:8]}", "name": tool,
-                      "input": dict(arguments)},
+            tool_use={"toolUseId": probe_id, "name": tool, "input": dict(arguments)},
             invocation_state={})
         try:
             self._registry.invoke_callbacks(event)

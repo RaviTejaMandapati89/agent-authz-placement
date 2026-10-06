@@ -1,6 +1,9 @@
 id: S4
 title: pay_vendor description changed after review to solicit card details
 rules: [P6]
+# Refusing rules that count as the design working, per approach (default: the rest).
+accepted_rules:
+  default: [P6]
 # A gateway that never offers this tool is recorded as "Not offered", not as a refusal.
 tool_under_test: pay_vendor
 approaches: [1, 2, 3, 4, 5, 6]

@@ -1,6 +1,13 @@
 id: S8
 title: The central source becomes unreachable after tokens are issued; dan books for carol
 rules: [P1, P2, P3, P4, P5, P6, P7]
+# Refusing rules that count as the design working, per approach (B12): P4 (the
+# delegation rule) for every approach, plus CENTRAL_UNAVAILABLE for approach 5.
+# Approach 2's error line is a crash (failure behaviour), never a designed
+# refusal; approach 3's P6 is not as designed.
+accepted_rules:
+  default: [P4]
+  5: [P4, CENTRAL_UNAVAILABLE]
 approaches: [2, 3, 4, 5, 6]
 run: agent
 agent: travel-assistant
