@@ -1,0 +1,14 @@
+id: S11
+title: Two use cases each need the rule "nobody approves their own expense"; each policy is generated from the same written requirements, separately
+rules: [P3]
+status: blocked
+approaches: [4, 5, 6]
+blocked_reason: >
+  The existing use-case policies were written by hand, not generated from
+  written requirements. How they will be generated is decided and recorded in
+  DESIGN.md section 10 before the official run.
+setup: []
+expected:
+  outcome: Refused
+  violation: []
+  legitimate: []

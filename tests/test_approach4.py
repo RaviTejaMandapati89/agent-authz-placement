@@ -816,14 +816,12 @@ async def test_a4_delegation_expiry_in_token_checked_against_server_clock(
     # The simclock starts at a fixed past value; we rely on the delegation in
     # fixtures.py expiring in 2027.  To test expiry, advance clock to 2028.
     # Token lifetime = 3600s (max), clock advance = ~10 years worth of seconds.
-    _ten_years_s = 10 * 365 * 24 * 3600
-    bearer = await _make_bearer(
-        a4_ctrl, "dan", "travel-assistant", lifetime=_ten_years_s,
-    )
-
-    # Advance server clock by 11 years to put us past 2027-12-31.
+    # Advance server clock by 11 years to put us past 2027-12-31, then issue
+    # a token that is valid at that simulated time (the gateway now checks
+    # token expiry against the simulated clock).
     _eleven_years_s = 11 * 365 * 24 * 3600
     await a4_ctrl.post("/control/clock/advance", json={"seconds": _eleven_years_s})
+    bearer = await _make_bearer(a4_ctrl, "dan", "travel-assistant")
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=a4_gw_app),
@@ -1404,3 +1402,41 @@ def test_a4_e12_runner_scopes_payments_agent():
     assert scopes == sorted(["expenses:approve", "payments:pay"]), (
         f"runner _AGENT_SCOPES payments-agent: {scopes}"
     )
+
+
+# ===========================================================================
+# Restored coverage (approved change A21): delegation expiry inside the token
+# ===========================================================================
+
+async def test_a4_restored_coverage_delegation_expiring_inside_token_lifetime_is_denied_by_p4(
+    a4_ctrl, a4_gw_app, log_path,
+):
+    """A valid token carries a delegation whose expiry falls inside the token's
+    lifetime. The clock moves past the delegation's expiry but not the token's;
+    approach 4 denies under P4. (Restored coverage: the earlier test of this
+    behaviour jumped eleven years and had to issue its token afterwards.)"""
+    from domain import fixtures
+    deleg = next(d for d in fixtures.DELEGATIONS
+                 if d["delegator"] == "carol" and d["delegate"] == "dan")
+    expiry = datetime.datetime.fromisoformat(deleg["expires"].replace("Z", "+00:00")).timestamp()
+    await a4_ctrl.post("/control/clock/set", json={"ts": expiry - 100})
+    bearer = await _make_bearer(a4_ctrl, "dan", "travel-assistant")          # lifetime 300
+    claims = _decode_unverified(bearer)
+    assert claims["exp"] > expiry + 100                  # the token outlives the delegation
+    assert any(d["delegator"] == "carol" for d in claims["delegations_received"])
+    await a4_ctrl.post("/control/clock/advance", json={"seconds": 150})
+    assert simclock.now() > expiry and simclock.now() < claims["exp"]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=a4_gw_app),
+        base_url="http://localhost:8765",
+        headers={"Host": "localhost:8765", "Authorization": f"Bearer {bearer}"},
+    ) as client:
+        session = _GwSession(client)
+        await session.initialize()
+        result = await session.call_tool(
+            "book_travel", {"traveller": "carol", "details": "Lisbon"})
+
+    assert result.get("isError") is True
+    d = _last_decision(log_path)
+    assert d["decision"] == "deny" and d["rule"] == "P4"

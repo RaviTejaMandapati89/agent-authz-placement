@@ -9,6 +9,7 @@ import datetime
 import hashlib
 import inspect
 import json
+import time
 import uuid
 from typing import Any, Callable
 
@@ -17,6 +18,7 @@ from starlette.responses import JSONResponse
 
 from domain import simclock, tokens
 from domain.scopes import TOOL_SCOPE_MAP
+from domain.state import state
 
 # ---------------------------------------------------------------------------
 # Module state
@@ -28,7 +30,6 @@ _fingerprints: dict[str, str] = {}
 _scope_map: dict[str, str] = {}
 _policy_plugin: Callable | None = None
 _prev_authorise: Callable | None = None
-_skip_token_expiry: bool = False
 
 
 def is_active() -> bool:
@@ -46,7 +47,7 @@ def install_gateway(
     scope_map: dict[str, str] | None = None,
     policy_plugin: Callable | None,
 ) -> None:
-    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise, _skip_token_expiry
+    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise
 
     if policy_plugin is None:
         raise ValueError("gateway mode requires a policy plugin")
@@ -59,7 +60,6 @@ def install_gateway(
     _fingerprints = dict(fingerprints)
     _scope_map = dict(scope_map) if scope_map is not None else dict(TOOL_SCOPE_MAP)
     _policy_plugin = policy_plugin
-    _skip_token_expiry = getattr(policy_plugin, "skip_token_expiry", False)
     _active = True
 
     if hasattr(policy_plugin, "process_clock_advance"):
@@ -71,7 +71,7 @@ def install_gateway(
 
 
 def remove_gateway() -> None:
-    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise, _skip_token_expiry
+    global _active, _grants, _fingerprints, _scope_map, _policy_plugin, _prev_authorise
 
     import domain.server as srv
     if _prev_authorise is not None:
@@ -95,7 +95,6 @@ def remove_gateway() -> None:
     _scope_map = {}
     _policy_plugin = None
     _prev_authorise = None
-    _skip_token_expiry = False
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +139,7 @@ def _append_log(entry: dict) -> None:
 
 def _gw_decision_line(
     call_id: str, caller: dict, tool_name: str,
-    arguments: dict, decision: dict,
+    arguments: dict, decision: dict, check_ms: float | None = None,
 ) -> None:
     entry: dict = {
         "type": "decision",
@@ -149,6 +148,9 @@ def _gw_decision_line(
         "channel": "agent",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "sim_time": simclock.now(),
+        "run_id": state.run_id,
+        "scenario": state.scenario,
+        "check_ms": check_ms,
         "user": caller.get("user"),
         "agent": caller.get("agent"),
         "tool": tool_name,
@@ -157,6 +159,7 @@ def _gw_decision_line(
         "rule": decision["rule"],
         "reason": decision["reason"],
         "central_called": decision.get("central_called", False),
+        "central_calls": decision.get("central_calls", 0),
         "central_duration_ms": decision.get("central_duration_ms", 0),
     }
     for key in ("central_copy_version", "revocation_applied"):
@@ -167,14 +170,17 @@ def _gw_decision_line(
 
 def _gw_outcome_line(
     call_id: str, *, executed: bool, error: str | None = None,
+    tool_ms: float | None = None,
 ) -> None:
     _append_log({
         "type": "outcome",
         "call_id": call_id,
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "sim_time": simclock.now(),
+        "run_id": state.run_id,
         "executed": executed,
         "error": error,
+        "tool_ms": tool_ms,
     })
 
 
@@ -198,7 +204,7 @@ async def _check_pipeline(
         return caller, decision, call_id
 
     try:
-        claims = tokens.verify_bearer(auth_header[7:], check_expiry=not _skip_token_expiry)
+        claims = tokens.verify_bearer(auth_header[7:])
     except Exception as exc:
         decision = {
             "decision": "deny", "rule": "IDENTITY",
@@ -282,6 +288,7 @@ async def _check_pipeline(
         "rule": result.get("rule"),
         "reason": result.get("reason", ""),
         "central_called": result.get("central_called", False),
+        "central_calls": result.get("central_calls", 0),
         "central_duration_ms": result.get("central_duration_ms", 0),
     }
     for key in ("central_copy_version", "revocation_applied"):
@@ -294,21 +301,25 @@ async def _check_pipeline(
 # tools/list filtering
 # ---------------------------------------------------------------------------
 
-def _filtered_tools(auth_header: str | None) -> list[dict]:
-    """Return tools granted to the authenticated agent with matching fingerprints."""
-    agent_name = None
+def _agent_of(auth_header: str | None) -> str | None:
+    """The outermost acting agent named by a Bearer token, or None."""
     if auth_header and auth_header.startswith("Bearer "):
         try:
             claims = tokens.verify_bearer(auth_header[7:])
-            caller = tokens.claims_to_caller(claims)
-            agent = caller.get("agent")
-            agent_name = (
+            agent = tokens.claims_to_caller(claims).get("agent")
+            return (
                 agent if isinstance(agent, str)
                 else agent[0] if isinstance(agent, list) and agent
                 else None
             )
         except Exception:
             pass
+    return None
+
+
+def _filtered_tools(auth_header: str | None) -> list[dict]:
+    """Return tools granted to the authenticated agent with matching fingerprints."""
+    agent_name = _agent_of(auth_header)
 
     granted = set(_grants.get(agent_name, []))
 
@@ -366,6 +377,16 @@ async def handle_mcp(request: Request) -> JSONResponse:
     if method == "tools/list":
         auth = request.headers.get("authorization")
         tools = _filtered_tools(auth)
+        # What the gateway offered is a fact the grader needs: a tool that was
+        # never offered was not refused, and is reported as "not offered".
+        _append_log({
+            "type": "tools_list",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "sim_time": simclock.now(),
+            "run_id": state.run_id,
+            "agent": _agent_of(auth),
+            "offered": [tool["name"] for tool in tools],
+        })
         return JSONResponse({
             "jsonrpc": "2.0",
             "id": req_id,
@@ -377,11 +398,14 @@ async def handle_mcp(request: Request) -> JSONResponse:
         arguments = params.get("arguments", {})
         auth = request.headers.get("authorization")
 
+        t0 = time.monotonic()  # latency only; never used for tokens or decisions
         caller, decision, call_id = await _check_pipeline(auth, tool_name, arguments)
-        _gw_decision_line(call_id, caller, tool_name, arguments, decision)
+        check_ms = (time.monotonic() - t0) * 1000
+        _gw_decision_line(call_id, caller, tool_name, arguments, decision, check_ms)
 
         if decision["decision"] in ("deny", "error"):
-            _gw_outcome_line(call_id, executed=False, error=decision["reason"])
+            _gw_outcome_line(call_id, executed=False, error=decision["reason"],
+                             tool_ms=(time.monotonic() - t0) * 1000)
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -394,7 +418,8 @@ async def handle_mcp(request: Request) -> JSONResponse:
         try:
             from domain.server import execute_tool
             result = execute_tool(tool_name, arguments, caller)
-            _gw_outcome_line(call_id, executed=True)
+            _gw_outcome_line(call_id, executed=True,
+                             tool_ms=(time.monotonic() - t0) * 1000)
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -403,7 +428,8 @@ async def handle_mcp(request: Request) -> JSONResponse:
                 },
             })
         except Exception as exc:
-            _gw_outcome_line(call_id, executed=False, error=str(exc))
+            _gw_outcome_line(call_id, executed=False, error=str(exc),
+                             tool_ms=(time.monotonic() - t0) * 1000)
             return JSONResponse({
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -443,7 +469,6 @@ async def _check_a2a_pipeline(
         claims = tokens.verify_bearer(
             auth_header[7:],
             audience="payments-agent",
-            check_expiry=not _skip_token_expiry,
         )
     except Exception as exc:
         decision = {
@@ -505,6 +530,7 @@ async def _check_a2a_pipeline(
         "rule": result.get("rule"),
         "reason": result.get("reason", ""),
         "central_called": result.get("central_called", False),
+        "central_calls": result.get("central_calls", 0),
         "central_duration_ms": result.get("central_duration_ms", 0),
     }
     for key in ("central_copy_version", "revocation_applied"):
@@ -522,8 +548,10 @@ async def handle_a2a(request: Request) -> JSONResponse:
         )
 
     auth = request.headers.get("authorization")
+    t0 = time.monotonic()  # latency only
     caller, decision, call_id = await _check_a2a_pipeline(auth)
-    _gw_decision_line(call_id, caller, "ask_payments_agent", {}, decision)
+    _gw_decision_line(call_id, caller, "ask_payments_agent", {}, decision,
+                      (time.monotonic() - t0) * 1000)
 
     if decision["decision"] in ("deny", "error"):
         _gw_outcome_line(call_id, executed=False, error=decision["reason"])

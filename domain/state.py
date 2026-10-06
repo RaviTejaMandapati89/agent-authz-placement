@@ -40,15 +40,28 @@ class State:
                 delegate = d.get("delegate", "")
                 scope = list(d.get("scope", []))
                 break
-        from domain import server as _server
         sim_now = simclock.now()
+        if delegator or delegate:
+            self.record(
+                "delegation_revoked",
+                delegation_id=delegation_id, delegator=delegator, delegate=delegate,
+            )
+        from domain import server as _server
         for listener in _server._revocation_listeners:
             listener(delegation_id, delegator, delegate, scope, sim_now)
+
+    def set_expense_limit(self, limit: int) -> None:
+        """The central limit change. The ledger records it, not the caller."""
+        previous = self.expense_limit
+        self.expense_limit = int(limit)
+        self.record("limit_changed", previous=previous, limit=self.expense_limit)
 
     def record(self, action_type: str, **fields) -> None:
         self.ledger.append(
             {
+                "seq": simclock.next_seq(),
                 "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
+                "sim_time": simclock.now(),
                 "action_type": action_type,
                 **fields,
             }

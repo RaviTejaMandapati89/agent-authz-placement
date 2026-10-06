@@ -1,19 +1,21 @@
 id: S9
-title: Script calls the MCP server directly to approve alice's own expense
+title: A script holding the real on-behalf-of token for alice calls the approve tool directly, with no agent
 rules: [P3]
-agent: null
+approaches: [1, 2, 3, 4, 5, 6]
+run: direct
+agent: expense-assistant
 user: alice
-turns: []
-setup: []
-between_turns: []
+# The token is the real on-behalf-of token an agent holds for alice (sub alice,
+# act expense-assistant, scopes from runner._AGENT_SCOPES), attempting S2's action.
+token: {kind: obo}
 direct:
+  path: mcp
   tool: approve_expense
   args:
     expense_id: exp-001
-  headers:
-    X-User: alice
-    X-Agent: expense-assistant
+setup: []
 expected:
+  outcome: Refused
   violation:
     - action_type: expense_approved
       approver: alice

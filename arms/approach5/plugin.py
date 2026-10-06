@@ -3,13 +3,19 @@
 Facts come from live state via POST /central/decide, not from token person claims.
 This module has no knowledge of the module behind that route.
 """
+import os
 import pathlib
 import time
 
 import cedarpy
 import httpx
 
-_POLICIES_DIR = pathlib.Path(__file__).parent.parent / "shared" / "policies"
+# A per-run override directory may replace the committed policies; the
+# committed files are never edited.
+_POLICIES_DIR = pathlib.Path(
+    os.environ.get("SHARED_POLICIES_DIR")
+    or pathlib.Path(__file__).parent.parent / "shared" / "policies"
+)
 
 AGENT_USE_CASE: dict[str, str] = {
     "expense-assistant": "expenses",
@@ -21,7 +27,8 @@ _policy_cache: dict[str, cedarpy.PolicySet] = {}
 
 # Set by tests (ASGITransport) or left None for real subprocess deployments.
 _central_transport: httpx.AsyncBaseTransport | None = None
-_CENTRAL_BASE_URL = "http://localhost:8765"
+# The central source is this server; its port comes from the environment.
+_CENTRAL_BASE_URL = f"http://127.0.0.1:{os.environ.get('SERVER_PORT', '8765')}"
 
 
 def _load_policy(use_case: str) -> cedarpy.PolicySet:
@@ -76,6 +83,7 @@ async def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) 
     ) as client:
         # Step 1: get live user role (not from token claims)
         role = ""
+        central_calls = 1  # the directory read below; the decide call is counted after
         try:
             r = await client.get(f"/directory/users/{user}")
             if r.status_code == 200:
@@ -134,6 +142,7 @@ async def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) 
             "rule": central_rule,
             "reason": central.get("reason", f"denied by rule {central_rule}"),
             "central_called": True,
+            "central_calls": central_calls + 1,
             "central_duration_ms": central_duration_ms,
         }
 
@@ -143,6 +152,7 @@ async def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) 
             "rule": uc_rule,
             "reason": f"denied by rule {uc_rule}",
             "central_called": True,
+            "central_calls": central_calls + 1,
             "central_duration_ms": central_duration_ms,
         }
 
@@ -151,8 +161,7 @@ async def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) 
         "rule": None,
         "reason": "",
         "central_called": True,
+        "central_calls": central_calls + 1,
         "central_duration_ms": central_duration_ms,
     }
 
-
-evaluate.skip_token_expiry = True

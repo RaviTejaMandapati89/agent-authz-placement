@@ -8,13 +8,18 @@ vendors or expense_limit from live state.
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 
 import cedarpy
 
 from domain import simclock
 
-_POLICIES_DIR = pathlib.Path(__file__).parent / "policies"
+# A per-run override directory may replace the committed policies; the
+# committed files are never edited.
+_POLICIES_DIR = pathlib.Path(
+    os.environ.get("APPROACH4_POLICIES_DIR") or pathlib.Path(__file__).parent / "policies"
+)
 
 AGENT_USE_CASE: dict[str, str] = {
     "expense-assistant": "expenses",
@@ -153,5 +158,3 @@ def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) -> dic
         "reason": f"denied by rule {rule_id}",
     }
 
-
-evaluate.skip_token_expiry = True

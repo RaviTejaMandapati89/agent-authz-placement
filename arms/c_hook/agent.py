@@ -90,6 +90,7 @@ def run(
     config_dir: pathlib.Path | None = None,
     model: Any = None,
     use_gateway: bool = False,
+    hook_wrap: Any = None,
 ) -> tuple[str, dict, list[dict]]:
     """Run a multi-turn conversation and return (final_reply, usage, turns_data)."""
     if model is None:
@@ -121,6 +122,10 @@ def run(
         config_dir=config_dir,
         bearer_token=bearer_token,
     )
+
+    if hook_wrap is not None:
+        # The harness times the unedited checkpoint call from outside.
+        hook = hook_wrap(hook)
 
     final_reply = ""
     total_input = 0

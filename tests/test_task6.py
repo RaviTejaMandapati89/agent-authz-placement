@@ -569,15 +569,30 @@ async def test_t6_s4_agent_decision_has_channel_agent(gw_ctrl, gw_app, log_path)
 # Spec item 5 — Runner support for app+agent combined scenario
 # ===========================================================================
 
-def test_t6_s5_runner_source_has_app_expenses_support():
-    """runner/run.py must include support for calling POST /app/expenses so the
-    runner can drive a combined app+agent scenario after a central limit change."""
-    src = (_REPO / "runner" / "run.py").read_text(encoding="utf-8")
-    assert "/app/expenses" in src, (
-        "runner/run.py must include logic for posting to /app/expenses; "
-        "the runner must be able to exercise the app channel in a scenario "
-        "alongside the agent channel"
-    )
+def test_t6_s5_runner_runs_s10_end_to_end_under_approach_5_and_both_channels_refuse(tmp_path):
+    """The runner runs S10 under approach 5 with a scripted model (the only
+    substitute). After the central limit change the decision log shows an app
+    entry and an agent entry for the same 400 request, both refused."""
+    from domain.server import _ScriptedModel
+    from runner import grader, study
+    from tests.study_scripts import SCRIPTS
+
+    turns, payments = SCRIPTS[("S10", None)]
+    row = study.run_scenario(5, "S10", out_dir=tmp_path, model=_ScriptedModel(turns),
+                             payments_turns=payments, timeout_s=120)
+    assert row["status"] == "ok", row.get("error_cause")
+
+    run_dir = pathlib.Path(row["run_dir"])
+    lines = grader.read_jsonl(run_dir / "decisions.jsonl")
+    submits = [e for e in lines
+               if e.get("type") == "decision" and e.get("tool") == "submit_expense"]
+    first_instant = min(e["sim_time"] for e in submits)
+    at_change = [e for e in submits if e["sim_time"] == first_instant]
+    app = [e for e in at_change if e["channel"] == "app"]
+    agent = [e for e in at_change if e["channel"] == "agent"]
+    assert app and agent, f"expected one app and one agent entry, got {at_change}"
+    assert app[0]["decision"] == "deny" and agent[0]["decision"] == "deny"
+    assert app[0]["rule"] == "P2" and agent[0]["rule"] == "P2"
 
 
 # ===========================================================================

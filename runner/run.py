@@ -2,10 +2,13 @@
 CLI runner.
 
 Usage:
-  uv run python -m runner.run --arm A --scenario S1 --runs 1
-  uv run python -m runner.run --arm A --all
-  uv run python -m runner.run --arm B --gen 1 --all
-  uv run python -m runner.run --arm B --gen all --all
+  uv run python -m runner.run --approach 5 --scenario S1 --runs 1
+  uv run python -m runner.run --approach 4 --all
+  uv run python -m runner.run --approach 3 --gen all --all
+  uv run python -m runner.run --approach all --all
+
+The functions below the CLI (run_one and its helpers) are the pilot-era runner,
+kept for the tests that exercise them. The study runs through runner.study.
 """
 import argparse
 import contextlib
@@ -108,6 +111,18 @@ def _list_gen_dirs() -> list[int]:
             except ValueError:
                 pass
     return nums
+
+
+_LEGACY_ARM_APPROACH = {"A": 1, "C": 2, "3": 3}
+
+
+def _legacy_applies(scenario: dict, arm: str) -> bool:
+    """Applicability is read from the scenario file's `approaches` list; a
+    scenario that lists none applies to every arm (as before)."""
+    listed = scenario.get("approaches")
+    if listed is None:
+        return True
+    return _LEGACY_ARM_APPROACH.get(arm) in listed
 
 
 def _load_scenario(scenario_id: str) -> dict:
@@ -395,8 +410,7 @@ def run_one(
         return "error"
 
     # Check if this arm applies to this scenario
-    applicable_arms = scenario.get("arms")
-    if applicable_arms is not None and arm not in applicable_arms:
+    if not _legacy_applies(scenario, arm):
         record = {
             "run_id": run_id,
             "arm": arm,
@@ -665,8 +679,7 @@ def _run_arm_b_gen(
         print(f"Gen-{gen_n}: contract tests FAILED — recording all runs as failed_integration")
         for scenario_id in scenarios:
             scenario = _load_scenario(scenario_id)
-            applicable_arms = scenario.get("arms")
-            if applicable_arms is not None and "B" not in applicable_arms:
+            if not _legacy_applies(scenario, "B"):
                 status_val = "n/a"
             else:
                 status_val = "failed_integration"
@@ -723,102 +736,57 @@ def _run_arm_b_gen(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run scenario evaluations")
-    parser.add_argument("--arm", default="A", help="Arm to run (A, B, C, D)")
+    parser = argparse.ArgumentParser(description="Run the study's scenarios")
+    parser.add_argument("--approach", required=True,
+                        help="Approach 1 to 6 (labels as DESIGN.md section 3), or 'all'")
     parser.add_argument("--gen", default=None,
-                        help="Arm B only: generation number N, or 'all' for gens 1-5")
+                        help="Approach 3 only: generation 1 to 5, or 'all' (default all)")
     parser.add_argument("--scenario", help="Scenario ID, e.g. S1")
     parser.add_argument("--runs", type=int, default=10, help="Runs per scenario")
     parser.add_argument("--all", dest="all_scenarios", action="store_true")
     parser.add_argument("--label", default="dev", help="Batch label suffix")
+    parser.add_argument("--out", default=None,
+                        help="Results directory (default results/<timestamp>_<label>)")
     args = parser.parse_args()
 
     if not args.scenario and not args.all_scenarios:
         parser.error("pass --scenario S1 or --all")
 
-    if args.arm == "B" and args.gen is None:
-        parser.error("--arm B requires --gen N or --gen all")
+    from runner import approaches as ap
+    from runner import scenarios as sc
+    from runner import study
+    from runner.summary import write_summary
 
-    scenarios = _list_scenarios() if args.all_scenarios else [args.scenario]
+    if args.approach == "all":
+        approach_ids = list(ap.IDS)
+    else:
+        try:
+            approach_ids = [int(args.approach)]
+        except ValueError:
+            parser.error("--approach must be 1 to 6 or 'all'")
+        if approach_ids[0] not in ap.IDS:
+            parser.error(f"--approach must be one of {ap.IDS}; pilot arms are not approaches")
+    gens = None
+    if args.gen and args.gen != "all":
+        try:
+            gens = [int(args.gen)]
+        except ValueError:
+            parser.error("--gen must be 1 to 5 or 'all'")
 
+    scenario_ids = sc.ids() if args.all_scenarios else [args.scenario]
     ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
-    batch_id = f"{ts}_{args.label}"
-    batch_dir = _REPO_ROOT / "results" / batch_id
+    batch_dir = (pathlib.Path(args.out) if args.out
+                 else _REPO_ROOT / "results" / f"{ts}_{args.label}")
     batch_dir.mkdir(parents=True, exist_ok=True)
-
     git_sha, dirty = _git_info()
+    print(f"Batch: {batch_dir.name}  commit: {git_sha}{'  (dirty)' if dirty else ''}")
 
-    print(f"Batch: {batch_id}")
-    print(f"Arm:   {args.arm}")
-    print(f"Runs per scenario: {args.runs}")
-    print(f"Commit: {git_sha}{'  (dirty)' if dirty else ''}")
-
-    # Arm B: run per-generation, each with its own server and contract tests.
-    if args.arm == "B":
-        if args.gen == "all":
-            gen_nums = _list_gen_dirs()
-            if not gen_nums:
-                print("No gen-N directories found in arms/b_spec/")
-                sys.exit(1)
-        else:
-            try:
-                gen_nums = [int(args.gen)]
-            except ValueError:
-                parser.error("--gen must be an integer or 'all'")
-        any_error = False
-        for gn in gen_nums:
-            had_error = _run_arm_b_gen(
-                gen_n=gn,
-                scenarios=scenarios,
-                runs_per_scenario=args.runs,
-                batch_dir=batch_dir,
-                git_sha=git_sha,
-                dirty=dirty,
-            )
-            if had_error:
-                any_error = True
-        print(f"\nResults directory: {batch_dir}")
-        if any_error:
-            print("ERROR: one or more runs failed")
-            sys.exit(1)
-        return
-
-    # Arms A, C, D: single shared server.
-    runs_out     = batch_dir / "runs.jsonl"
-    decision_log = str(batch_dir / "decisions.jsonl")
-    hook_log     = str(batch_dir / "hook_decisions.jsonl")
-    os.environ["HOOK_LOG"] = hook_log
-
-    server_env: dict = {}
-    if args.arm == "D":
-        server_env["ENFORCEMENT"] = "cedar"
-    _arm_approach = {"A": "1", "C": "2", "3": "3", "D": "1"}
-    server_env["PAYMENTS_AGENT_APPROACH"] = _arm_approach.get(args.arm, "1")
-    if args.arm == "3" and args.gen and args.gen != "all":
-        server_env["PAYMENTS_AGENT_GEN"] = f"gen-{args.gen}"
-
-    any_error = False
-    with domain_server(decision_log, env_extra=server_env) as (port, base_url):
-        print(f"Server: {base_url}\n")
-        for scenario_id in scenarios:
-            print(f"Scenario {scenario_id}:")
-            for run_num in range(1, args.runs + 1):
-                status = run_one(
-                    arm=args.arm,
-                    scenario_id=scenario_id,
-                    run_num=run_num,
-                    base_url=base_url,
-                    decision_log_path=pathlib.Path(decision_log),
-                    runs_out=runs_out,
-                    git_sha=git_sha,
-                    dirty=dirty,
-                )
-                if status == "error":
-                    any_error = True
-
-    print(f"\nResults: {runs_out}")
-    if any_error:
-        print("ERROR: one or more runs failed — see rows with status=error above")
+    rows = study.run_batch(approach_ids, scenario_ids, args.runs, batch_dir,
+                           gens=gens, git_sha=git_sha, dirty=dirty)
+    write_summary(rows, batch_dir)
+    print(f"\nResults: {batch_dir / 'results.jsonl'}\nSummary: {batch_dir / 'summary.md'}")
+    if any(r["status"] == "error" for r in rows):
+        print("ERROR: some runs failed outside the approach; they are recorded with their cause")
         sys.exit(1)
 
 

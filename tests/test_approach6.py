@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 
 from domain import simclock, tokens
+from domain.simclock import _EPOCH as _SIM_EPOCH
 from domain.grants import AGENT_GRANTS as GATEWAY_GRANTS
 
 # ---------------------------------------------------------------------------
@@ -252,28 +253,21 @@ def test_a6_i1_approach5_plugin_loads_from_shared():
 # Spec item 2 — Published copy of central policy
 # ===========================================================================
 
-async def test_a6_i2_initial_snapshot_taken_on_first_decision(
+async def test_a6_i2_initial_copy_exists_at_start_version_1_at_time_0(
     a6_ctrl, a6_gw_app, log_path,
 ):
-    """A snapshot is taken before the first approach6 decision (at sim epoch)."""
+    """A copy exists at server start: version 1, at simulated time 0 (the first
+    schedule boundary), before any decision is made."""
     from arms.approach6 import plugin as _a6_plugin
-    assert _a6_plugin._snapshot is None, "snapshot must be None before first decision"
-
-    bearer = await _make_bearer(a6_ctrl, "alice", "expense-assistant")
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=a6_gw_app),
-        base_url="http://localhost:8765",
-        headers={"Host": "localhost:8765", "Authorization": f"Bearer {bearer}"},
-    ) as client:
-        session = _GwSession(client)
-        await session.initialize()
-        await session.call_tool(
-            "submit_expense",
-            {"claimant": "alice", "amount": 100.0, "description": "first decision"},
-        )
-
-    assert _a6_plugin._snapshot is not None, "snapshot must be taken after first decision"
-    assert _a6_plugin._snapshot_version >= 1, "snapshot version must be >= 1"
+    assert simclock.now() == _SIM_EPOCH, "the clock must still be at simulated time 0"
+    assert not log_path.exists() or log_path.read_text().strip() == "", (
+        "no decision may have been made yet"
+    )
+    assert _a6_plugin._snapshot is not None, "a copy must exist at start, before any decision"
+    assert _a6_plugin._snapshot_version == 1, (
+        f"the start copy must be version 1; got {_a6_plugin._snapshot_version}"
+    )
+    assert _a6_plugin._snapshot["version"] == 1
 
 
 async def test_a6_i2_snapshot_contains_expense_limit_and_vendors(
@@ -637,16 +631,16 @@ async def test_a6_i6_central_down_still_allows_from_last_copy(
     )
 
 
-async def test_a6_i6_central_down_no_snapshot_returns_unavailable(
+async def test_a6_i6_central_down_at_start_no_copy_fails_closed(
     a6_ctrl, a6_gw_app, log_path,
 ):
-    """If central goes down BEFORE the first snapshot is ever taken, approach6
-    returns CENTRAL_UNAVAILABLE (no copy to work from)."""
+    """Central source down at server start: no copy is ever published, so
+    person-level decisions fail closed with CENTRAL_UNAVAILABLE."""
     from arms.approach6 import plugin as _a6_plugin
-    # Ensure no snapshot yet
-    assert _a6_plugin._snapshot is None, "no snapshot before first decision"
 
     await a6_ctrl.post("/control/directory-down", json={"down": True})
+    _a6_plugin.reset()  # server start with the source already down
+    assert _a6_plugin._snapshot is None, "no copy at start when the source is down"
 
     bearer = await _make_bearer(a6_ctrl, "alice", "expense-assistant")
     async with httpx.AsyncClient(
@@ -658,11 +652,11 @@ async def test_a6_i6_central_down_no_snapshot_returns_unavailable(
         await session.initialize()
         result = await session.call_tool(
             "submit_expense",
-            {"claimant": "alice", "amount": 50.0, "description": "no snap"},
+            {"claimant": "alice", "amount": 50.0, "description": "no copy"},
         )
 
     assert result.get("isError") is True, (
-        "With no prior snapshot and central down, must return error; got: {result}"
+        f"With no copy and central down, must return error; got: {result}"
     )
     d = _last_decision(log_path)
     assert d["decision"] == "deny"
@@ -1412,37 +1406,38 @@ async def test_a6_i2_change_after_publication_not_in_current_copy(
 async def test_a6_i2_publication_schedule_is_fixed_not_install_relative(
     a6_ctrl, a6_gw_app, log_path,
 ):
-    """Spec item 2: publication times are fixed at EPOCH+900*k, independent of
-    when the plugin is installed or reset.
+    """Spec item 2: versions advance on fixed boundaries at EPOCH+900*k from time 0,
+    independent of install time, with the start copy as version 1.
 
-    The test resets the plugin at t=EPOCH+450 (halfway to the first fixed boundary
-    at EPOCH+900).  At EPOCH+901 exactly one publication should have fired
-    (copy_version == 1).  If the schedule were install-relative the first pub would
-    land at EPOCH+1350 and no snapshot would be available yet.
-
-    Also verifies the internal _next_pub_at is anchored to the simulated epoch, not
-    to the reset() call time.
+    The plugin is reset (re-installed) at EPOCH+450: its start copy is version 1
+    and the next boundary is still EPOCH+900, not EPOCH+1350.  Crossing EPOCH+900
+    makes version 2; crossing EPOCH+1800 makes version 3.
 
     Fails if removed: the fixed-schedule guarantee would be unverified.
     """
     from arms.approach6 import plugin as _a6_plugin
-    from domain.simclock import _EPOCH as _SIM_EPOCH
 
-    # Advance to EPOCH+450 (before first fixed publication at EPOCH+900)
     await a6_ctrl.post("/control/clock/advance", json={"seconds": 450})
-
-    # Simulate a re-installation at t=EPOCH+450
     _a6_plugin.reset()
 
-    # The first publication must still be scheduled for EPOCH+900, not EPOCH+1350
+    assert _a6_plugin._snapshot_version == 1, "the start copy is version 1"
     assert _a6_plugin._next_pub_at == _SIM_EPOCH + 900.0, (
         "After reset at EPOCH+450 the schedule must remain anchored to the simulated "
         f"epoch: _next_pub_at must be {_SIM_EPOCH + 900.0}; "
         f"got {_a6_plugin._next_pub_at!r}"
     )
 
-    # Advance to EPOCH+901 (past the first fixed publication at EPOCH+900)
-    await a6_ctrl.post("/control/clock/advance", json={"seconds": 451})
+    await a6_ctrl.post("/control/clock/advance", json={"seconds": 451})   # EPOCH+901
+    assert _a6_plugin._snapshot_version == 2, (
+        f"the EPOCH+900 boundary must give version 2; got {_a6_plugin._snapshot_version}"
+    )
+
+    await a6_ctrl.post("/control/clock/advance", json={"seconds": 900})   # EPOCH+1801
+    assert _a6_plugin._snapshot_version == 3, (
+        f"the EPOCH+1800 boundary must give version 3; got {_a6_plugin._snapshot_version}"
+    )
+    from domain import central_publisher as _publisher
+    assert _publisher._next_pub_at == _SIM_EPOCH + 2700.0
 
     bearer = await _make_bearer(a6_ctrl, "alice", "expense-assistant")
     async with httpx.AsyncClient(
@@ -1456,18 +1451,10 @@ async def test_a6_i2_publication_schedule_is_fixed_not_install_relative(
             "submit_expense",
             {"claimant": "alice", "amount": 50.0, "description": "fixed-schedule check"},
         )
-
-    # Fixed schedule → publication fired at EPOCH+900 → snapshot exists → allowed
-    assert result.get("isError") is not True, (
-        "Fixed schedule: publication at EPOCH+900 must fire by EPOCH+901 even if "
-        "plugin was reset at EPOCH+450. "
-        "Install-relative would place first pub at EPOCH+1350 → CENTRAL_UNAVAILABLE. "
-        f"Got: {result}"
-    )
+    assert result.get("isError") is not True, f"Got: {result}"
     d = _last_decision(log_path)
-    assert d.get("central_copy_version") == 1, (
-        "Exactly one publication should have fired (copy_version=1); "
-        f"got: {d.get('central_copy_version')!r}"
+    assert d.get("central_copy_version") == 3, (
+        f"the decision must use version 3; got: {d.get('central_copy_version')!r}"
     )
 
 

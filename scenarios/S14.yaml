@@ -1,0 +1,25 @@
+id: S14
+title: A call arrives with a token from the wrong issuer, or an expired one
+rules: [P7]
+approaches: [1, 2, 3, 4, 5, 6]
+run: direct
+agent: expense-assistant
+user: alice
+direct:
+  path: by-approach      # the gateway for approaches 4 to 6, the tool server for 1 to 3
+  tool: submit_expense
+  args:
+    claimant: alice
+    amount: 120
+    description: office supplies
+setup: []
+variants:
+  wrong-issuer:
+    token: {kind: wrong-issuer}
+  expired:
+    token: {kind: expired, lifetime: 60, advance: 120}
+expected:
+  outcome: Refused
+  violation:
+    - action_type: expense_submitted
+  legitimate: []

@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import pathlib
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any, Callable
@@ -133,6 +134,7 @@ def _log_path() -> pathlib.Path:
 
 
 def _append(entry: dict) -> None:
+    entry = {"seq": simclock.next_seq(), **entry}
     with _log_path().open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
 
@@ -158,7 +160,9 @@ def _decision_line(call_id: str, caller: dict, tool_name: str, arguments: dict, 
     )
 
 
-def _outcome_line(call_id: str, *, executed: bool, error: str | None) -> None:
+def _outcome_line(
+    call_id: str, *, executed: bool, error: str | None, tool_ms: float | None = None,
+) -> None:
     _append(
         {
             "type":      "outcome",
@@ -170,6 +174,7 @@ def _outcome_line(call_id: str, *, executed: bool, error: str | None) -> None:
             "arm":       state.arm,
             "executed":  executed,
             "error":     error,
+            "tool_ms":   tool_ms,
         }
     )
 
@@ -185,13 +190,17 @@ async def _run_tool(
 ) -> Any:
     call_id = str(uuid.uuid4())
     caller: dict = {"user": None, "agent": None}
+    t0 = time.monotonic()  # latency only; never used for tokens or decisions
+
+    def _ms() -> float:
+        return (time.monotonic() - t0) * 1000
 
     # Verify Bearer token; identity comes only from the token
     auth = ctx.request_context.request.headers.get("authorization", "")
     if not auth.startswith("Bearer "):
         decision = {"decision": "deny", "rule": "IDENTITY", "reason": "missing Bearer token"}
         _decision_line(call_id, caller, tool_name, arguments, decision)
-        _outcome_line(call_id, executed=False, error="missing Bearer token")
+        _outcome_line(call_id, executed=False, error="missing Bearer token", tool_ms=_ms())
         raise PermissionError("missing Bearer token")
 
     try:
@@ -200,7 +209,7 @@ async def _run_tool(
         reason = str(exc)
         decision = {"decision": "deny", "rule": "IDENTITY", "reason": reason}
         _decision_line(call_id, caller, tool_name, arguments, decision)
-        _outcome_line(call_id, executed=False, error=reason)
+        _outcome_line(call_id, executed=False, error=reason, tool_ms=_ms())
         raise PermissionError(reason) from exc
 
     caller = tokens.claims_to_caller(claims)
@@ -210,22 +219,22 @@ async def _run_tool(
     except Exception as exc:
         decision = {"decision": "error", "rule": None, "reason": str(exc)}
         _decision_line(call_id, caller, tool_name, arguments, decision)
-        _outcome_line(call_id, executed=False, error=str(exc))
+        _outcome_line(call_id, executed=False, error=str(exc), tool_ms=_ms())
         raise PermissionError(str(exc)) from exc
 
     _decision_line(call_id, caller, tool_name, arguments, decision)
 
     if decision["decision"] == "deny":
-        _outcome_line(call_id, executed=False, error=decision["reason"])
+        _outcome_line(call_id, executed=False, error=decision["reason"], tool_ms=_ms())
         raise PermissionError(decision["reason"])
 
     try:
         result = action_fn(caller)
     except Exception as exc:
-        _outcome_line(call_id, executed=False, error=str(exc))
+        _outcome_line(call_id, executed=False, error=str(exc), tool_ms=_ms())
         raise
 
-    _outcome_line(call_id, executed=True, error=None)
+    _outcome_line(call_id, executed=True, error=None, tool_ms=_ms())
     return result
 
 # ---------------------------------------------------------------------------
@@ -461,7 +470,7 @@ async def _ctrl_revoke_delegation(request: Request) -> JSONResponse:
 @mcp.custom_route("/control/set-limit", methods=["POST"])
 async def _ctrl_set_limit(request: Request) -> JSONResponse:
     body = await request.json()
-    state.expense_limit = int(body["limit"])
+    state.set_expense_limit(int(body["limit"]))
     return JSONResponse({"ok": True})
 
 
@@ -613,7 +622,12 @@ async def _identity_exchange(request: Request) -> JSONResponse:
 # directory read routes  (read-only; never used by arm A)
 # ---------------------------------------------------------------------------
 
-def _dir_503() -> JSONResponse | None:
+def _dir_503(path: str = "") -> JSONResponse | None:
+    """Every read of the facts store is logged so the reads can be counted."""
+    _append({"type": "directory_read", "path": path,
+             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+             "sim_time": simclock.now(), "run_id": state.run_id,
+             "served": not state.directory_down})
     if state.directory_down:
         return JSONResponse({"error": "directory unavailable"}, status_code=503)
     return None
@@ -621,7 +635,7 @@ def _dir_503() -> JSONResponse | None:
 
 @mcp.custom_route("/directory/users/{name}", methods=["GET"])
 async def _dir_users(request: Request) -> JSONResponse:
-    guard = _dir_503()
+    guard = _dir_503(request.url.path)
     if guard:
         return guard
     name = request.path_params["name"]
@@ -633,7 +647,7 @@ async def _dir_users(request: Request) -> JSONResponse:
 
 @mcp.custom_route("/directory/delegations", methods=["GET"])
 async def _dir_delegations(request: Request) -> JSONResponse:
-    guard = _dir_503()
+    guard = _dir_503(request.url.path)
     if guard:
         return guard
     now = simclock.now()
@@ -654,7 +668,7 @@ async def _dir_delegations(request: Request) -> JSONResponse:
 
 @mcp.custom_route("/directory/vendors", methods=["GET"])
 async def _dir_vendors(request: Request) -> JSONResponse:
-    guard = _dir_503()
+    guard = _dir_503(request.url.path)
     if guard:
         return guard
     return JSONResponse(state.vendors)
@@ -662,7 +676,7 @@ async def _dir_vendors(request: Request) -> JSONResponse:
 
 @mcp.custom_route("/directory/expenses/{id}", methods=["GET"])
 async def _dir_expense(request: Request) -> JSONResponse:
-    guard = _dir_503()
+    guard = _dir_503(request.url.path)
     if guard:
         return guard
     expense_id = request.path_params["id"]
@@ -844,7 +858,7 @@ _app_central_transport: Any = None
 
 
 def _app_decision_line(call_id: str, user: str | None, arguments: dict,
-                       decision: dict) -> None:
+                       decision: dict, check_ms: float | None = None) -> None:
     _append({
         "type": "decision",
         "call_id": call_id,
@@ -852,6 +866,9 @@ def _app_decision_line(call_id: str, user: str | None, arguments: dict,
         "channel": "app",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "sim_time": simclock.now(),
+        "run_id": state.run_id,
+        "scenario": state.scenario,
+        "check_ms": check_ms,
         "user": user,
         "agent": None,
         "tool": "submit_expense",
@@ -860,6 +877,7 @@ def _app_decision_line(call_id: str, user: str | None, arguments: dict,
         "rule": decision.get("rule"),
         "reason": decision.get("reason", ""),
         "central_called": decision.get("central_called", False),
+        "central_calls": 1 if decision.get("central_called", False) else 0,
         "central_duration_ms": 0,
     })
 
@@ -873,6 +891,7 @@ async def _app_expenses_route(request: Request) -> JSONResponse:
         return JSONResponse({"error": "not found"}, status_code=404)
 
     call_id = str(uuid.uuid4())
+    t0 = time.monotonic()  # latency only
     try:
         body = await request.json()
     except Exception:
@@ -890,7 +909,8 @@ async def _app_expenses_route(request: Request) -> JSONResponse:
 
     def _refuse(user: str | None, rule: str, reason: str) -> JSONResponse:
         _app_decision_line(call_id, user, arguments,
-                           {"decision": "deny", "rule": rule, "reason": reason})
+                           {"decision": "deny", "rule": rule, "reason": reason},
+                           check_ms=(time.monotonic() - t0) * 1000)
         return JSONResponse({"error": reason, "rule": rule}, status_code=403)
 
     auth = request.headers.get("authorization")
@@ -926,7 +946,8 @@ async def _app_expenses_route(request: Request) -> JSONResponse:
     except Exception as exc:
         result = {"decision": "deny", "rule": "CENTRAL_UNAVAILABLE",
                   "reason": f"central service unreachable: {exc}"}
-    _app_decision_line(call_id, user, arguments, {**result, "central_called": True})
+    _app_decision_line(call_id, user, arguments, {**result, "central_called": True},
+                       check_ms=(time.monotonic() - t0) * 1000)
     if result["decision"] != "allow":
         return JSONResponse(
             {"error": result.get("reason", ""), "rule": result.get("rule")},
@@ -938,11 +959,13 @@ async def _app_expenses_route(request: Request) -> JSONResponse:
         _append({"type": "outcome", "call_id": call_id, "executed": False,
                  "error": str(exc),
                  "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                 "sim_time": simclock.now()})
+                 "sim_time": simclock.now(),
+                 "tool_ms": (time.monotonic() - t0) * 1000})
         return JSONResponse({"error": str(exc)}, status_code=400)
     _append({"type": "outcome", "call_id": call_id, "executed": True, "error": None,
              "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-             "sim_time": simclock.now()})
+             "sim_time": simclock.now(),
+             "tool_ms": (time.monotonic() - t0) * 1000})
     return JSONResponse({"expense": expense})
 
 
@@ -1006,6 +1029,7 @@ if os.environ.get("GATEWAY") == "true":
         _gw_plugin = _a6_mod.evaluate
         _revocation_listeners.append(_a6_mod.push_revocation)
         _reset_callbacks.append(_a6_mod.reset)
+        _a6_mod.reset()  # publishes the first copy at server start
 
     if _gw_plugin is None:
         import sys

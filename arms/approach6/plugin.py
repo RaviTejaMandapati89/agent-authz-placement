@@ -13,6 +13,7 @@ receive_snapshot(); it never reads live state for people-facts or central-policy
 data (no access to the four blocked attributes on the state singleton).
 """
 import datetime
+import os
 import pathlib
 
 import cedarpy
@@ -21,7 +22,12 @@ from domain import simclock
 from domain.simclock import _EPOCH
 from domain import central_publisher as _publisher
 
-_POLICIES_DIR = pathlib.Path(__file__).parent.parent / "shared" / "policies"
+# A per-run override directory may replace the committed policies; the
+# committed files are never edited.
+_POLICIES_DIR = pathlib.Path(
+    os.environ.get("SHARED_POLICIES_DIR")
+    or pathlib.Path(__file__).parent.parent / "shared" / "policies"
+)
 _CENTRAL_POLICY_PATH = pathlib.Path(__file__).parent.parent.parent / "domain" / "central_policy.cedar"
 
 AGENT_USE_CASE: dict[str, str] = {
@@ -62,6 +68,9 @@ def reset() -> None:
     _publisher.reset()
     _publisher.register_snapshot_receiver(receive_snapshot)
     _next_pub_at = _publisher._next_pub_at
+    # The first copy is published at server start, simulated time 0: the first
+    # schedule boundary. No decision has to trigger it.
+    _publisher.take_initial_snapshot()
 
 
 # ---------------------------------------------------------------------------
@@ -238,12 +247,6 @@ def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) -> dic
     if not _st.directory_down:
         _drain_due_events(simclock.now())
 
-    # Lazy initial snapshot: taken by the publisher on the first decision at EPOCH
-    # (before any clock advance fires a scheduled publication).
-    if _snapshot is None:
-        if not _st.directory_down:
-            _publisher.take_initial_snapshot()
-
     snap = _snapshot
     if snap is None:
         return {
@@ -315,8 +318,6 @@ def evaluate(claims: dict, agent_chain: list, tool: str, arguments: dict) -> dic
 
     return {"decision": "allow", "rule": None, "reason": "", **common}
 
-
-evaluate.skip_token_expiry = True
 
 
 # Register with the publisher so snapshots are delivered to this plugin.

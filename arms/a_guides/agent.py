@@ -130,6 +130,38 @@ def _make_ask_payments_agent(base_url: str, bearer_token: str, use_gateway: bool
     return ask_payments_agent
 
 
+def _make_wired_tool(name: str, url: str, headers: dict):
+    """A tool the agent's own spec wires in, whether or not the tool list the
+    gateway served includes it. Calls go to the same endpoint as every other
+    tool call, so the endpoint, not the agent, decides."""
+    if name != "pay_vendor":
+        raise ValueError(f"no wiring defined for {name!r}")
+
+    @tool(name=name, description="Pay a vendor.")
+    def pay_vendor(vendor: str, amount: float, reference: str) -> str:
+        """Pay a vendor."""
+        arguments = {"vendor": vendor, "amount": amount, "reference": reference}
+        base = {"Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-11-25", **headers}
+        init = httpx.post(url, headers=base, timeout=30.0, json={
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                       "clientInfo": {"name": "wired-tool", "version": "0"}}})
+        sid = init.headers.get("mcp-session-id")
+        call_headers = dict(base)
+        if sid:
+            call_headers["mcp-session-id"] = sid
+        r = httpx.post(url, headers=call_headers, timeout=30.0, json={
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}})
+        body = r.json().get("result", {})
+        text = " ".join(c.get("text", "") for c in body.get("content", []))
+        return text or str(body)
+
+    return pay_vendor
+
+
 def run(
     agent_name: str,
     user: str,
@@ -140,6 +172,7 @@ def run(
     bearer_token: str = "",
     model: Any = None,
     use_gateway: bool = False,
+    extra_tool_names: list[str] | None = None,
 ) -> tuple[str, dict]:
     """
     Run a multi-turn conversation and return (final_reply, usage).
@@ -170,6 +203,10 @@ def run(
     mcp_client = MCPClient(url=effective_mcp_url, headers=headers)
     with mcp_client:
         tools = list(mcp_client.list_tools_sync()) + [ask_tool]
+        wired = {getattr(t, "tool_name", None) for t in tools}
+        for extra in extra_tool_names or []:
+            if extra not in wired:
+                tools.append(_make_wired_tool(extra, effective_mcp_url, headers))
         agent = Agent(
             model=model,
             tools=tools,

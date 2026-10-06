@@ -25,6 +25,10 @@ load_dotenv()
 
 _APPROACH3 = pathlib.Path(__file__).parent
 
+# The agent's own spec: the agent-side config the checkpoint reads its declared
+# tools from. A run may supply a different directory; this is the default.
+DEFAULT_CONFIG_DIR = _APPROACH3.parent / "c_hook" / "config"
+
 _current_policy_override: dict = {}
 
 
@@ -97,6 +101,7 @@ def run(
     gen: int = 1,
     model: Any = None,
     use_gateway: bool = False,
+    hook_wrap: Any = None,
 ) -> tuple[str, dict, list[dict]]:
     """Run a multi-turn conversation and return (final_reply, usage, turns_data)."""
     if model is None:
@@ -118,7 +123,7 @@ def run(
         limit_override = int(_current_policy_override["expense_limit"])
 
     if config_dir is None:
-        config_dir = pathlib.Path(__file__).parent.parent / "c_hook" / "config"
+        config_dir = DEFAULT_CONFIG_DIR
 
     PolicyHook = _load_checkpoint(gen)
     hook = PolicyHook(
@@ -130,6 +135,10 @@ def run(
         config_dir=config_dir,
         bearer_token=bearer_token,
     )
+
+    if hook_wrap is not None:
+        # The harness times the unedited checkpoint call from outside.
+        hook = hook_wrap(hook)
 
     final_reply = ""
     total_input = 0
