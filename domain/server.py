@@ -701,6 +701,15 @@ def _run_payments_agent(task: str, tool_server_token: str, user: str,
     if _payments_agent_model_turns is not None:
         model = _ScriptedModel(_payments_agent_model_turns)
 
+    # Task 8, D4: with MODEL_CALL_LOG set, this agent's model calls go to the
+    # run's model log. Unset, the model is exactly what it was.
+    model_call_log = os.environ.get("MODEL_CALL_LOG")
+    if model_call_log:
+        from runner import model_record
+        model = model_record.RecordingModel(
+            model, factory=None if model is not None else model_record.real_model,
+            log_path=model_call_log, source="server")
+
     import importlib as _il
     if approach in ("1", "4", "5", "6"):
         _arm_a = _il.import_module("arm" + "s.a_guides.agent")

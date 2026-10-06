@@ -2,10 +2,11 @@
 CLI runner.
 
 Usage:
-  uv run python -m runner.run --approach 5 --scenario S1 --runs 1
-  uv run python -m runner.run --approach 4 --all
-  uv run python -m runner.run --approach 3 --gen all --all
-  uv run python -m runner.run --approach all --all
+  uv run python -m runner.run --approach 5 --scenario S1 --runs 1 --max-tokens N
+  uv run python -m runner.run --approach 4 --all --max-tokens N
+  uv run python -m runner.run --approach 3 --gen all --all --max-tokens N
+  uv run python -m runner.run --approach all --all --max-tokens N [--workers N] [--max-runs N]
+A batch with any run that calls the real model requires --max-tokens.
 
 The functions below the CLI (run_one and its helpers) are the pilot-era runner,
 kept for the tests that exercise them. The study runs through runner.study.
@@ -747,6 +748,13 @@ def main() -> None:
     parser.add_argument("--label", default="dev", help="Batch label suffix")
     parser.add_argument("--out", default=None,
                         help="Results directory (default results/<timestamp>_<label>)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Runs in parallel, each in its own process (default 1)")
+    parser.add_argument("--max-runs", type=int, default=None,
+                        help="Stop cleanly after this many runs")
+    parser.add_argument("--max-tokens", type=int, default=None,
+                        help="Stop cleanly once this many tokens are used (required: "
+                             "every run here calls the real model)")
     args = parser.parse_args()
 
     if not args.scenario and not args.all_scenarios:
@@ -781,8 +789,13 @@ def main() -> None:
     git_sha, dirty = _git_info()
     print(f"Batch: {batch_dir.name}  commit: {git_sha}{'  (dirty)' if dirty else ''}")
 
-    rows = study.run_batch(approach_ids, scenario_ids, args.runs, batch_dir,
-                           gens=gens, git_sha=git_sha, dirty=dirty)
+    from runner.budget import Budget, BudgetRequired
+    try:
+        rows = study.run_batch(approach_ids, scenario_ids, args.runs, batch_dir,
+                               gens=gens, git_sha=git_sha, dirty=dirty, workers=args.workers,
+                               budget=Budget(max_runs=args.max_runs, max_tokens=args.max_tokens))
+    except BudgetRequired as exc:
+        parser.error(str(exc))
     write_summary(rows, batch_dir)
     print(f"\nResults: {batch_dir / 'results.jsonl'}\nSummary: {batch_dir / 'summary.md'}")
     if any(r["status"] == "error" for r in rows):

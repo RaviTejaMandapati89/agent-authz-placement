@@ -1,5 +1,6 @@
 """Start and stop the domain server as a subprocess."""
 import contextlib
+import fcntl
 import os
 import pathlib
 import socket
@@ -29,8 +30,24 @@ def wait_for_port(port: int, timeout: float = 15.0) -> None:
 
 
 @contextlib.contextmanager
+def _port_claim():
+    """Hold a machine-wide lock from choosing a free port until the server that
+    owns it is listening, so two workers starting at once never pick the same
+    port (task 8, item 3)."""
+    lock_path = pathlib.Path(tempfile.gettempdir()) / "guides-vs-gates-port.lock"
+    with lock_path.open("a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
 def domain_server(decision_log: str, env_extra: dict | None = None):
     """Start domain server on a free port, yield (port, base_url), then stop."""
+    claim = contextlib.ExitStack()
+    claim.enter_context(_port_claim())
     port = free_port()
     env = {
         **os.environ,
@@ -43,14 +60,21 @@ def domain_server(decision_log: str, env_extra: dict | None = None):
     stderr_file = tempfile.NamedTemporaryFile(
         mode="w+", suffix=".stderr", delete=False,
     )
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "domain.server"],
-        env=env,
-        cwd=str(_REPO_ROOT),
-        stderr=stderr_file,
-    )
     try:
-        wait_for_port(port)
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "domain.server"],
+            env=env,
+            cwd=str(_REPO_ROOT),
+            stderr=stderr_file,
+        )
+    except BaseException:
+        claim.close()
+        raise
+    try:
+        try:
+            wait_for_port(port)
+        finally:
+            claim.close()
         base_url = f"http://127.0.0.1:{port}"
         yield port, base_url
     except RuntimeError:

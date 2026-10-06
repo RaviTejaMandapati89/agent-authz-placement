@@ -8,6 +8,7 @@ simulated clock). The only thing a test may swap is the model.
 """
 import concurrent.futures
 import contextlib
+import multiprocessing
 import datetime
 import json
 import os
@@ -21,7 +22,8 @@ import httpx
 from domain import tokens
 from runner import approaches as ap
 from runner import config as cfg
-from runner import grader, overrides, places, scenarios, timing
+from runner import budget as budget_mod
+from runner import grader, model_record, overrides, places, scenarios, timing
 from runner._server import domain_server
 from runner.run import _AGENT_SCOPES, _direct_mcp_call
 
@@ -431,6 +433,12 @@ def _write_row(out_dir: pathlib.Path, row: dict) -> dict:
     return row
 
 
+def run_tag(approach, gen, scenario_id, variant, run_num) -> str:
+    """The run's directory name: one per run, so no two runs share a path."""
+    return f"{approach}{'-g' + str(gen) if gen else ''}-{scenario_id}" \
+           f"{'-' + variant if variant else ''}-{run_num}"
+
+
 def _metrics(approach: int, scenario: dict, logs: grader.RunLogs, flow_out: dict) -> dict:
     m: dict = {
         "false_refusals": grader.false_refusals(scenario, logs),
@@ -464,11 +472,13 @@ def run_scenario(
     approach: int, scenario_id: str, *, variant: str | None = None, run_num: int = 1,
     gen: int | None = None, out_dir: pathlib.Path, model=None,
     payments_turns: list[dict] | None = None, timeout_s: float = 600.0,
-    git_sha: str = "unknown", dirty: bool = False,
+    git_sha: str = "unknown", dirty: bool = False, write_row: bool = True,
 ) -> dict:
     """Run one scenario for one approach; grade it from the logs; append one
-    row to out_dir/results.jsonl and return it."""
+    row to out_dir/results.jsonl (unless write_row is False: a batch's parent
+    writes the rows) and return it. `model` None means the real model."""
     out_dir = pathlib.Path(out_dir)
+    emit = _write_row if write_row else (lambda _out, r: r)
     ap.get(approach)
     if approach == 3 and gen is None:
         raise ValueError("approach 3 runs against a generation: pass gen=1..5")
@@ -476,14 +486,13 @@ def run_scenario(
     row = _row_base(approach, gen, scenario_id, variant, run_num, git_sha, dirty)
 
     if scenarios.status(raw) == "blocked":
-        return _write_row(out_dir, {**row, "status": "blocked", "verdict": "blocked",
+        return emit(out_dir, {**row, "status": "blocked", "verdict": "blocked",
                                     "reason": raw.get("blocked_reason")})
     if not scenarios.applies(raw, approach):
-        return _write_row(out_dir, {**row, "status": "n/a", "verdict": "n/a"})
+        return emit(out_dir, {**row, "status": "n/a", "verdict": "n/a"})
 
     scenario = scenarios.resolve(raw, variant)
-    tag = f"{approach}{'-g' + str(gen) if gen else ''}-{scenario_id}" \
-          f"{'-' + variant if variant else ''}-{run_num}"
+    tag = run_tag(approach, gen, scenario_id, variant, run_num)
     run_dir = out_dir / "runs" / tag
     run_dir.mkdir(parents=True, exist_ok=True)
     server_log, hook_log, issuer_log = (run_dir / "decisions.jsonl",
@@ -492,8 +501,13 @@ def run_scenario(
     a = ap.get(approach)
     run_id = row["run_id"]
 
+    model_log = run_dir / "model_calls.jsonl"
     env = {"ISSUER_LOG": str(issuer_log), "HOOK_LOG": str(hook_log),
-           "PAYMENTS_AGENT_APPROACH": str(approach)}
+           "PAYMENTS_AGENT_APPROACH": str(approach), model_record.ENV_VAR: str(model_log)}
+    # The model is the only thing a run swaps; whichever it is, it is recorded.
+    model = model_record.RecordingModel(
+        model, factory=model_record.real_model if model is None else None,
+        log_path=model_log, source="harness")
     if approach == 3:
         env["PAYMENTS_AGENT_GEN"] = f"gen-{gen}"
     if a.gateway:
@@ -502,6 +516,8 @@ def run_scenario(
         env["SERVER_TEST_MODE"] = "1"
 
     start = time.monotonic()
+    started_at = time.time()
+    server_port = None
     status, error_cause, error_category = "ok", None, None
     flow_out: dict = {}
     ledger: list[dict] = []
@@ -511,6 +527,7 @@ def run_scenario(
         env.update(ov.env)
         try:
             with domain_server(str(server_log), env_extra=env) as (_port, base):
+                server_port = _port
                 _post(base, "/control/reset")
                 _post(base, "/control/set-run", {"run_id": run_id, "scenario": scenario_id,
                                                  "arm": str(approach)})
@@ -553,14 +570,24 @@ def run_scenario(
             error_category = "harness"
         record_overrides = {"notes": ov.notes, "diffs": ov.diffs}
 
+    model_usage = model_record.usage(model_log)
+    if model_usage["id_mismatches"]:
+        # Any request sent with another model id makes the run an error, whatever
+        # else happened, and the error names both ids (D2).
+        m = model_usage["id_mismatches"][0]
+        status, error_category = "error", "model id"
+        error_cause = f"model id mismatch: request sent with {m['sent']!r}, pinned {m['pinned']!r}"
     row.update({
         "status": status, "duration_s": round(time.monotonic() - start, 3),
+        "started_at": started_at, "finished_at": time.time(),
+        "worker_pid": os.getpid(), "server_port": server_port,
+        "model_usage": model_usage,
         "overrides": record_overrides, "run_dir": str(run_dir),
     })
     if status == "error":
         row.update({"verdict": "error", "error_cause": error_cause,
                     "error_category": error_category})
-        return _write_row(out_dir, row)
+        return emit(out_dir, row)
 
     (run_dir / "ledger.json").write_text(json.dumps(ledger))
     logs = grader.load_logs(ledger, server_log, hook_log, issuer_log)
@@ -574,7 +601,7 @@ def run_scenario(
         "aborted_by_checkpoint": bool(flow_out.get("aborted_by_checkpoint")),
         "metrics": _metrics(approach, scenario, logs, flow_out),
     })
-    return _write_row(out_dir, row)
+    return emit(out_dir, row)
 
 
 # ---------------------------------------------------------------------------
@@ -597,14 +624,112 @@ def plan(approach_ids, scenario_ids, runs: int, gens=None):
                         yield (a, g, sid, v, n)
 
 
-def run_batch(approach_ids, scenario_ids, runs: int, out_dir: pathlib.Path, *, gens=None,
-              git_sha="unknown", dirty=False, model=None) -> list[dict]:
-    rows = []
-    for a, g, sid, v, n in plan(approach_ids, scenario_ids, runs, gens):
-        row = run_scenario(a, sid, variant=v, run_num=n, gen=g, out_dir=out_dir,
-                           git_sha=git_sha, dirty=dirty, model=model)
+def is_run(item) -> bool:
+    """Does this plan item start a run? A blocked scenario, or one that does not
+    apply to the approach, is only recorded (plan() gives it one placeholder)."""
+    a, _g, sid, _v, _n = item
+    raw = scenarios.load(sid)
+    return scenarios.status(raw) != "blocked" and scenarios.applies(raw, a)
+
+
+def _run_item(index, item, out_dir, item_kwargs, git_sha, dirty, timeout_s, model=None):
+    """One plan item in whichever process calls it. The batch's parent writes the
+    row; this only runs the scenario and returns it."""
+    a, g, sid, v, n = item
+    kw = item_kwargs(item) if item_kwargs else ({"model": model} if model is not None else {})
+    row = run_scenario(a, sid, variant=v, run_num=n, gen=g, out_dir=out_dir, git_sha=git_sha,
+                       dirty=dirty, timeout_s=timeout_s, write_row=False, **kw)
+    row["plan_index"] = index
+    return row
+
+
+def _describe(item, row) -> str:
+    a, g, sid, v, n = item
+    return (f"  approach {a}{f' gen-{g}' if g else ''} {sid}"
+            f"{f' [{v}]' if v else ''} run {n}: {row['verdict']}"
+            f"{' (' + row['error_cause'] + ')' if row.get('error_cause') else ''}")
+
+
+def run_items(items, out_dir, *, workers: int = 1, budget=None, model=None, item_kwargs=None,
+              git_sha="unknown", dirty=False, timeout_s: float = 600.0, progress=print) -> list[dict]:
+    """Run plan items (approach, generation, scenario, variant, run number) and
+    write one row each to out_dir/results.jsonl, from this process only.
+
+    With workers > 1 each run is in a worker process, so each run has its own
+    environment, server port, simulated clock and log paths; the parent is the
+    only writer of the results file. A real-model batch (no model, no
+    item_kwargs) refuses to start without a token budget (D6). `item_kwargs`
+    (a picklable function of the item) supplies a test's model and scripted
+    payments turns; a model object cannot be shared between processes."""
+    out_dir = pathlib.Path(out_dir)
+    items = list(items)
+    real = model is None and item_kwargs is None and any(is_run(i) for i in items)
+    if real and (budget is None or budget.max_tokens is None):
+        raise budget_mod.BudgetRequired(
+            "this batch calls the real model: pass --max-tokens (it will not start without one)")
+    if workers > 1 and model is not None:
+        raise ValueError("workers > 1 needs item_kwargs: a model object cannot be shared "
+                         "between worker processes")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    not_run: list = []
+
+    def record(row, item):
+        _write_row(out_dir, row)
         rows.append(row)
-        print(f"  approach {a}{f' gen-{g}' if g else ''} {sid}"
-              f"{f' [{v}]' if v else ''} run {n}: {row['verdict']}"
-              f"{' (' + row['error_cause'] + ')' if row.get('error_cause') else ''}")
+        if budget is not None and row.get("status") not in ("n/a", "blocked"):
+            budget.finish(row)
+        progress(_describe(item, row))
+
+    def placeholder(index, item):
+        record(_run_item(index, item, out_dir, item_kwargs, git_sha, dirty, timeout_s, model), item)
+
+    pending = [(i, it) for i, it in enumerate(items)]
+    if workers <= 1:
+        for index, item in pending:
+            if not is_run(item):
+                placeholder(index, item)
+            elif budget is not None and not budget.allow_start():
+                not_run.append(item)
+            else:
+                if budget is not None:
+                    budget.start()
+                record(_run_item(index, item, out_dir, item_kwargs, git_sha, dirty,
+                                 timeout_s, model), item)
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            running: dict = {}
+            queue = list(pending)
+            while queue or running:
+                while queue and len(running) < workers:
+                    index, item = queue[0]
+                    if not is_run(item):
+                        queue.pop(0)
+                        placeholder(index, item)
+                    elif budget is not None and not budget.allow_start():
+                        not_run.extend(it for _, it in queue if is_run(it))
+                        queue.clear()
+                    else:
+                        queue.pop(0)
+                        if budget is not None:
+                            budget.start()
+                        fut = pool.submit(_run_item, index, item, out_dir, item_kwargs,
+                                          git_sha, dirty, timeout_s)
+                        running[fut] = item
+                if running:
+                    done, _ = concurrent.futures.wait(
+                        running, return_when=concurrent.futures.FIRST_COMPLETED)
+                    for fut in done:
+                        record(fut.result(), running.pop(fut))
+    if budget is not None:
+        budget.write(out_dir, planned=sum(1 for it in items if is_run(it)), not_run=not_run)
     return rows
+
+
+def run_batch(approach_ids, scenario_ids, runs: int, out_dir: pathlib.Path, *, gens=None,
+              git_sha="unknown", dirty=False, model=None, workers: int = 1,
+              budget=None, item_kwargs=None) -> list[dict]:
+    return run_items(plan(approach_ids, scenario_ids, runs, gens), out_dir, workers=workers,
+                     budget=budget, model=model, item_kwargs=item_kwargs,
+                     git_sha=git_sha, dirty=dirty)
