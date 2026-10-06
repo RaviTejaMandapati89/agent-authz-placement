@@ -18,6 +18,7 @@ from strands.tools.mcp import MCPClient
 
 import httpx
 
+from domain.grants import granted
 from domain.identity import identity_paragraph
 from runner.config import AWS_REGION, MODEL_ID, TEMPERATURE
 
@@ -145,11 +146,13 @@ def run(
     total_output = 0
     turns_data: list[dict] = []
 
-    ask_tool = _make_ask_payments_agent(base_url, bearer_token, use_gateway)
+    # Wired only where domain/grants.py grants it (task 8, D13).
+    ask_tools = ([_make_ask_payments_agent(base_url, bearer_token, use_gateway)]
+                 if granted(agent_name, "ask_payments_agent") else [])
 
     mcp_client = MCPClient(url=effective_mcp_url, headers=headers)
     with mcp_client:
-        tools = list(mcp_client.list_tools_sync()) + [ask_tool]
+        tools = list(mcp_client.list_tools_sync()) + ask_tools
         agent = Agent(
             model=model,
             tools=tools,

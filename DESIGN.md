@@ -286,6 +286,29 @@ after results exist.
   not findings. No scenario, accepted refusing rule or criterion in section 8
   changes.
 
+- **6 October 2026, after the first smoke run, before the official run.** Two
+  harness defects, fixed.
+  - Every agent was given the tool for asking the payments agent to act,
+    including the payments agent itself, which is not granted it. In S4 the
+    payments agent called it and was refused at identity, a refusal that had
+    nothing to do with the scenario. The tool is now given only to agents
+    granted it.
+  - In S10 the refusing rule shown for a run was taken from both channels, so a
+    run that was violated in the agent channel showed the non-agent channel's
+    refusal beside it. The refusing rule now comes from the agent channel, and
+    the non-agent channel's refusals are reported separately.
+  - Verdicts, accepted refusing rules and the criteria in section 8 do not
+    change. The smoke test is rerun in full on the commit carrying this entry.
+
+- **6 October 2026, after the first smoke run.** S12 as built, recorded so the
+  condition is stated before any official result. Under approach 4 the common
+  rules exist only as copies inside each use-case policy, so the S12 use-case
+  policy changes its own copy of the limit rule. Under approaches 5 and 6 the
+  common rule is central, so the S12 use-case policy adds a permit, which the
+  central rule overrides. A use-case policy under approach 4 that only added a
+  permit would be refused, because a Cedar forbid overrides a permit. The
+  write-up states this condition beside the S12 result.
+
 ## 11. Sources
 
 - OWASP Top 10 for LLM Applications 2025, LLM07 System Prompt Leakage:

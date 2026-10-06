@@ -13,3 +13,9 @@ AGENT_GRANTS: dict[str, list[str]] = {
 for _agent, _tools in json.loads(os.environ.get("GRANT_ADDS", "{}")).items():
     AGENT_GRANTS[_agent] = list(AGENT_GRANTS.get(_agent, [])) + [
         t for t in _tools if t not in AGENT_GRANTS.get(_agent, [])]
+
+
+def granted(agent: str, tool: str) -> bool:
+    """Whether the agent is granted the tool. The one source for which agent is
+    wired with which tool (task 8, D13)."""
+    return tool in AGENT_GRANTS.get(agent, [])
