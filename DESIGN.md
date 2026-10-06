@@ -225,6 +225,30 @@ after results exist.
   reported beside the verdict, so a one-second exposure and a sixty-minute one
   are told apart by the window, not by the verdict.
 
+- **6 October 2026, before any S11 generation.** S11's method.
+  - Each use-case team's written requirements are a plain-language text, one
+    for Expenses and one for Payments. Both carry the identical rule "Nobody
+    approves their own expense", with the manager rule and the statement that
+    anything not refused is allowed.
+  - Each policy is generated separately, in a fresh workspace that holds only
+    that use case's text, the Cedar schema, the names of the attributes the
+    gateway passes, and a fixed instruction. One non-interactive call, with
+    the same model and tool version as approach 3's generations.
+  - One pilot pair is generated first and judged only on whether the pipeline
+    worked, never on what the policies say. The pipeline is then frozen and
+    five counted pairs are generated, every one kept as it came.
+  - Each generated policy is checked by the gateway's own Cedar engine and on
+    three fixed requests: a self-approval, a manager's approval, and a
+    self-approval where the manager rule alone would allow it. The results
+    are recorded as findings; nothing is fixed or regenerated.
+  - In S11 runs, each pair replaces the use-case policies for that run, with
+    scripted calls and no model, ten runs per pair per approach. A pair holds
+    only if both use cases refuse the self-approval; the rule each refusal
+    names is reported separately.
+  - In approaches 5 and 6 this rule is enforced centrally, so they hold S11
+    whatever the generated policies say. S11 therefore tests approach 4,
+    where each use case carries its own copy.
+
 ## 11. Sources
 
 - OWASP Top 10 for LLM Applications 2025, LLM07 System Prompt Leakage:
