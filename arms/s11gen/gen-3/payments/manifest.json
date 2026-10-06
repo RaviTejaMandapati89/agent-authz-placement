@@ -1,0 +1,67 @@
+{
+  "findings": {
+    "isolated_self_approval": {
+      "decision": "deny",
+      "note": "constructed: the approver's claims list the claimant as a report, so only the self-approval rule can refuse",
+      "request": {
+        "approver": "erin",
+        "claimant": "erin",
+        "reports_to_adds": [
+          "erin"
+        ]
+      },
+      "rule": "P3"
+    },
+    "manager_approval": {
+      "decision": "deny",
+      "note": "no finance user manages anyone, so bob (a manager) is the only legitimate approver and is not in finance",
+      "request": {
+        "approver": "bob",
+        "claimant": "alice"
+      },
+      "rule": "P7"
+    },
+    "parses": true,
+    "self_approval": {
+      "decision": "deny",
+      "request": {
+        "approver": "erin",
+        "claimant": "erin"
+      },
+      "rule": "P3"
+    },
+    "use_case": "payments",
+    "validates": false,
+    "validation_errors": [
+      "[policy1] for policy `policy1`, unable to guarantee safety of access to optional attribute `approver_is_manager` in context for Action::\"approve_expense\""
+    ]
+  },
+  "inputs_sha256": {
+    "gateway_facts.md": "ff109fd144e29389ba5db5911c217a69629b7f85019b22d60855cbc03d323be6",
+    "prompt.md": "b64f839dc9c62f73d184f68bea42feb88c01e3c3e4a55cd884aef09abbeb4c63",
+    "requirements.md": "0cdcc70fe424516391f410b97dfd02752e903244eae1e8cc35b6d91348e39321",
+    "schema.json": "b0ab5345c5a7fc161e27f5c584119f876cb0937b46041bdafa2c8866a6bf8882"
+  },
+  "log_sha256": "e6194e5c0c685475290e3c771dc40020811ca1243f1f7f38924b94150f6b4d6a",
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "pair": 3,
+  "pinned_model": "global.anthropic.claude-sonnet-4-6",
+  "policy_sha256": "204e1b2397a7c8f739174577466908c097e63648b3be9c68b07f269b60e4291b",
+  "seal_check": {
+    "status": "clean"
+  },
+  "settings": {
+    "allowed_tools": "Read(./**),Edit(./policy.cedar)",
+    "claude_code_version": "2.1.286 (Claude Code)",
+    "command": "claude --print",
+    "output_format": "stream-json",
+    "permission_prompts": "none",
+    "tools": "Read,Write"
+  },
+  "time": {
+    "end": "2026-10-06T16:11:16Z",
+    "imported": "2026-10-06T16:13:20.082071+00:00",
+    "start": "2026-10-06T16:11:03Z"
+  },
+  "use_case": "payments"
+}

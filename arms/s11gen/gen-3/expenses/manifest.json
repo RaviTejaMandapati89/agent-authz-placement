@@ -1,0 +1,67 @@
+{
+  "findings": {
+    "isolated_self_approval": {
+      "decision": "deny",
+      "note": "constructed: the approver's claims list the claimant as a report, so only the self-approval rule can refuse",
+      "request": {
+        "approver": "alice",
+        "claimant": "alice",
+        "reports_to_adds": [
+          "alice"
+        ]
+      },
+      "rule": "P3"
+    },
+    "manager_approval": {
+      "decision": "allow",
+      "request": {
+        "approver": "bob",
+        "claimant": "alice"
+      },
+      "rule": null
+    },
+    "parses": true,
+    "self_approval": {
+      "decision": "deny",
+      "request": {
+        "approver": "alice",
+        "claimant": "alice"
+      },
+      "rule": "P3"
+    },
+    "use_case": "expenses",
+    "validates": false,
+    "validation_errors": [
+      "[policy2] for policy `policy2`, unable to guarantee safety of access to optional attribute `has_approval_ref` in context for Action::\"submit_expense\"",
+      "[policy3] for policy `policy3`, unable to guarantee safety of access to optional attribute `approver_is_manager` in context for Action::\"approve_expense\""
+    ]
+  },
+  "inputs_sha256": {
+    "gateway_facts.md": "ff109fd144e29389ba5db5911c217a69629b7f85019b22d60855cbc03d323be6",
+    "prompt.md": "b64f839dc9c62f73d184f68bea42feb88c01e3c3e4a55cd884aef09abbeb4c63",
+    "requirements.md": "f2ed287c1cb378d6e0f57a59801d1002d381ec33852317b63494523f9f68f048",
+    "schema.json": "b0ab5345c5a7fc161e27f5c584119f876cb0937b46041bdafa2c8866a6bf8882"
+  },
+  "log_sha256": "d50601ac4b72fcb952dc140bf292bbcd102654364cac33a35e00dc3d8603d389",
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "pair": 3,
+  "pinned_model": "global.anthropic.claude-sonnet-4-6",
+  "policy_sha256": "29ecf55728ac17423c9b59e478edd4154129c1f4f96d57f7f155e6f7fb6c908a",
+  "seal_check": {
+    "status": "clean"
+  },
+  "settings": {
+    "allowed_tools": "Read(./**),Edit(./policy.cedar)",
+    "claude_code_version": "2.1.286 (Claude Code)",
+    "command": "claude --print",
+    "output_format": "stream-json",
+    "permission_prompts": "none",
+    "tools": "Read,Write"
+  },
+  "time": {
+    "end": "2026-10-06T16:11:03Z",
+    "imported": "2026-10-06T16:13:19.884291+00:00",
+    "start": "2026-10-06T16:10:47Z"
+  },
+  "use_case": "expenses"
+}

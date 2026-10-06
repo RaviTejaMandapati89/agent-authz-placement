@@ -1,0 +1,39 @@
+{
+  "": {
+    "entityTypes": {
+      "User": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "username": {"type": "String", "required": true},
+            "role": {"type": "String", "required": true}
+          }
+        }
+      },
+      "Resource": {}
+    },
+    "actions": {
+      "read_receipt": {"appliesTo": {"principalTypes": ["User"], "resourceTypes": ["Resource"], "context": {"type": "ToolContext"}}},
+      "submit_expense": {"appliesTo": {"principalTypes": ["User"], "resourceTypes": ["Resource"], "context": {"type": "ToolContext"}}},
+      "approve_expense": {"appliesTo": {"principalTypes": ["User"], "resourceTypes": ["Resource"], "context": {"type": "ToolContext"}}},
+      "book_travel": {"appliesTo": {"principalTypes": ["User"], "resourceTypes": ["Resource"], "context": {"type": "ToolContext"}}},
+      "pay_vendor": {"appliesTo": {"principalTypes": ["User"], "resourceTypes": ["Resource"], "context": {"type": "ToolContext"}}}
+    },
+    "commonTypes": {
+      "ToolContext": {
+        "type": "Record",
+        "attributes": {
+          "action_name": {"type": "String", "required": true},
+          "claimant": {"type": "String", "required": false},
+          "amount_pence": {"type": "Long", "required": false},
+          "has_approval_ref": {"type": "Boolean", "required": false},
+          "expense_claimant": {"type": "String", "required": false},
+          "approver_is_manager": {"type": "Boolean", "required": false},
+          "traveller": {"type": "String", "required": false},
+          "has_travel_delegation": {"type": "Boolean", "required": false},
+          "vendor": {"type": "String", "required": false}
+        }
+      }
+    }
+  }
+}
