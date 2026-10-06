@@ -201,6 +201,25 @@ after results exist.
     generated from written requirements. How they will be generated is decided
     and recorded here before the official run.
 
+- **6 October 2026, later, still before any run.** Found while building the
+  scenarios end to end.
+  - S5's window is reported as two numbers: the last attempt allowed and the
+    first refused, in simulated seconds after the revocation. Attempts start at
+    the same simulated second as the revocation, so approach 6's one-second
+    event delay shows in the result.
+  - S15 runs with the premise in its own wording, "the payments agent's own role
+    would allow it": the first agent holds the payment scope, so only the
+    person's entitlement can refuse. The version with the first agent's normal
+    scope is kept as a separate variant, because there the refusal comes from
+    scope narrowing, not from the person.
+  - S12 tests the expense limit rule. No rule in policy.md governs approving
+    above a limit, so "allows approvals above the limit" is read as a use-case
+    policy permitting expenses above it.
+  - Approach 6 publishes its first copy of the common policy when it starts, as
+    the first boundary of its 15-minute schedule.
+  - When a gateway never offers a tool to the agent (S4, S6), the result is
+    recorded as "not offered", separately from a logged refusal.
+
 ## 11. Sources
 
 - OWASP Top 10 for LLM Applications 2025, LLM07 System Prompt Leakage:
