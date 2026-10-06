@@ -136,7 +136,8 @@ def _run_agent(approach: int, gen: int | None, *, agent: str, user: str, turns: 
     if approach in (1, 4, 5, 6):
         mod.apply_policy_change(ov.prompt_change or {})
         try:
-            return mod.run(**common, extra_tool_names=ov.extra_tool_names or None)
+            return mod.run(**common, extra_tool_names=ov.extra_tool_names or None,
+                           rules_in_prompt=approach == 1)
         finally:
             mod.apply_policy_change({})
     if approach == 2:

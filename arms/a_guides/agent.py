@@ -70,14 +70,20 @@ def apply_policy_change(change: dict) -> None:
     _current_policy_change = change or {}
 
 
-def build_system_prompt(agent_name: str, policy_change: dict | None = None, user: str = "") -> str:
+def build_system_prompt(agent_name: str, policy_change: dict | None = None, user: str = "",
+                        rules_in_prompt: bool = True) -> str:
     """
     Build the system prompt for the named agent.
+
+    With rules_in_prompt False the prompt is the identity paragraph alone, the
+    same prompt approaches 2 and 3 use.
 
     If policy_change contains expense_limit, the limit in rule P2 is rewritten
     in-place so the prompt contains exactly one limit value.
     """
     ident = identity_paragraph(agent_name, user)
+    if not rules_in_prompt:
+        return ident
     policy = _load_policy_sections()
 
     if policy_change and "expense_limit" in policy_change:
@@ -173,6 +179,7 @@ def run(
     model: Any = None,
     use_gateway: bool = False,
     extra_tool_names: list[str] | None = None,
+    rules_in_prompt: bool = True,
 ) -> tuple[str, dict]:
     """
     Run a multi-turn conversation and return (final_reply, usage).
@@ -187,7 +194,7 @@ def run(
         )
     if not hasattr(model, "stateful"):
         model.stateful = False
-    system_prompt = build_system_prompt(agent_name, _current_policy_change, user)
+    system_prompt = build_system_prompt(agent_name, _current_policy_change, user, rules_in_prompt)
     headers = {"Authorization": f"Bearer {bearer_token}"}
 
     base_url = mcp_url.rsplit("/mcp", 1)[0]

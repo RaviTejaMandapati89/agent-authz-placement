@@ -717,6 +717,7 @@ def _run_payments_agent(task: str, tool_server_token: str, user: str,
             agent_name="payments-agent", user=user, turns=[task],
             mcp_url=mcp_url, bearer_token=tool_server_token,
             model=model, use_gateway=use_gateway,
+            rules_in_prompt=approach == "1",
         )
     elif approach == "2":
         _arm_c = _il.import_module("arm" + "s.c_hoo" + "k.agent")
@@ -777,7 +778,8 @@ async def _handle_a2a_internal(request: Request) -> JSONResponse:
     if approach in ("1", "4", "5", "6"):
         import importlib as _il2
         _arm_a2 = _il2.import_module("arm" + "s.a_guides.agent")
-        sys_prompt = _arm_a2.build_system_prompt("payments-agent", user=user)
+        sys_prompt = _arm_a2.build_system_prompt("payments-agent", user=user,
+                                                 rules_in_prompt=approach == "1")
     else:
         from domain.identity import identity_paragraph
         sys_prompt = identity_paragraph("payments-agent", user)

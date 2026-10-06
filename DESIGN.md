@@ -262,6 +262,30 @@ after results exist.
     the model id every request was sent with, and any other id makes the run an
     error.
 
+- **6 October 2026, after the concurrency probe, before the smoke run.** Two
+  harness defects.
+  - Run records did not keep what the model said or which tools it called, so
+    a run with no logged decision could not be explained. Each run now writes a
+    transcript for diagnosis, with signed tokens removed. It is not a grading
+    input.
+  - Cost per completed task counted only the first agent's tokens, so a run
+    with two agents was undercounted by about half. It now counts every model
+    call in the run.
+  - No scenario, rule or criterion changes.
+
+- **6 October 2026, after the concurrency probe, before the smoke run.**
+  Approaches 4, 5 and 6 ran the same agent as approach 1, so their prompt
+  carried the rules from policy.md, while approaches 2 and 3 carried only the
+  agent's identity. That put an unmeasured second layer in front of the gateway
+  in 4 to 6, and left their prompts at the old £500 limit in S7, which the
+  change-cost count did not include. In probe runs under S7, the model in 4
+  and 5 read the old limit, told the user no approval was needed and asked her
+  to confirm, so no call reached the gateway. Approaches 2 to 6 now share the
+  identity-only prompt; only approach 1 carries the rules. This covers both the
+  requesting agent and the payments agent the tool server runs. Probe runs are
+  not findings. No scenario, accepted refusing rule or criterion in section 8
+  changes.
+
 ## 11. Sources
 
 - OWASP Top 10 for LLM Applications 2025, LLM07 System Prompt Leakage:
