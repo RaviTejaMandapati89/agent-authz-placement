@@ -18,6 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MODEL="global.anthropic.claude-sonnet-4-6"
 TOOLS="Read(./**),Write(./policy.cedar)"
+# Provider route: Bedrock, as approach 3's generations ran. Region is not a secret;
+# credentials come from the owner's own AWS configuration and are never set here.
+AWS_REGION_FOR_CALL="${S11_AWS_REGION:-us-west-2}"
 FROZEN_TAG="s11-pipeline-frozen"
 ROOT=~/s11-gen
 WS="$ROOT/$UC-$PAIR"
@@ -45,22 +48,51 @@ CLAUDE_VERSION=$(claude --version 2>&1 | head -1)
 
 cd "$WS"
 set +e
-cat prompt.md | claude --print --output-format stream-json --verbose \
-    --model "$MODEL" --allowedTools "$TOOLS" > "$LOG"
+# the Bedrock route is set inside this subshell, so it applies to this one call only
+(
+    export CLAUDE_CODE_USE_BEDROCK=1
+    export AWS_REGION="$AWS_REGION_FOR_CALL"
+    cat prompt.md | claude --print --output-format stream-json --verbose \
+        --model "$MODEL" --allowedTools "$TOOLS"
+) > "$LOG"
 CODE=$?
 set -e
 END_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-python3 - "$META" "$PAIR" "$UC" "$MODEL" "$TOOLS" "$CLAUDE_VERSION" "$START_TIME" "$END_TIME" "$CODE" <<'PYEOF'
+set +e
+python3 - "$META" "$PAIR" "$UC" "$MODEL" "$TOOLS" "$CLAUDE_VERSION" "$START_TIME" "$END_TIME" "$CODE" \
+    "$AWS_REGION_FOR_CALL" "$LOG" <<'PYEOF'
 import json, pathlib, sys
-meta, pair, uc, model, tools, version, start, end, code = sys.argv[1:]
+meta, pair, uc, model, tools, version, start, end, code, region, log = sys.argv[1:]
+result = None
+for line in pathlib.Path(log).read_text().splitlines():
+    try:
+        event = json.loads(line)
+    except ValueError:
+        continue
+    if event.get("type") == "result":
+        result = event
+is_error = result is None or bool(result.get("is_error"))
 pathlib.Path(meta).write_text(json.dumps({
     "pair": int(pair), "use_case": uc, "model": model,
+    "provider": "bedrock", "aws_region": region,
     "settings": {"command": "claude --print", "output_format": "stream-json",
                  "allowed_tools": tools, "claude_code_version": version},
     "start_time": start, "end_time": end, "exit_code": int(code),
+    "result_is_error": is_error,
 }, indent=2) + "\n")
+if result is None:
+    print(f"FAILED: the stream has no result line ({log})", file=sys.stderr)
+elif is_error:
+    print(f"FAILED: the stream's result is an error: {str(result.get('result'))[:500]} ({log})", file=sys.stderr)
+sys.exit(3 if is_error else 0)
 PYEOF
+RESULT_CODE=$?
+set -e
 
+if [[ "$RESULT_CODE" -ne 0 ]]; then
+    echo "Generation $UC pair $PAIR FAILED: $WS" >&2
+    exit "$RESULT_CODE"
+fi
 echo "Generation $UC pair $PAIR complete (exit $CODE): $WS"
 exit "$CODE"
