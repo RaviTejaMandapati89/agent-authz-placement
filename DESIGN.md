@@ -249,6 +249,19 @@ after results exist.
     whatever the generated policies say. S11 therefore tests approach 4,
     where each use case carries its own copy.
 
+- **6 October 2026, before any real-model run.** The smoke test runs on the
+  commit that carries this entry: every scenario, variant and approach once,
+  each approach 3 generation and each S11 pair once, 190 runs in all. A
+  concurrency probe runs 16 fixed runs at 1, 2, 4 and 8 workers first.
+  - Smoke and probe results check the harness. They are not findings and are
+    not reported as results.
+  - From the first smoke run on, only harness defects are fixed, each recorded
+    here with its date and reason. Scenarios, accepted refusing rules and the
+    grading criteria do not change.
+  - Bedrock does not return the id of the model that answered. Each run records
+    the model id every request was sent with, and any other id makes the run an
+    error.
+
 ## 11. Sources
 
 - OWASP Top 10 for LLM Applications 2025, LLM07 System Prompt Leakage:
