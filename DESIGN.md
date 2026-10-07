@@ -1,9 +1,16 @@
 # Study design: where should an AI agent's permission check sit?
 
-Committed before any component is built or any run is made, so the approaches,
-scenarios and the way results will be read are fixed in advance.
+This is the specification the harness was built from and run against: the
+approaches, the scenarios, how results would be read, and the sources behind the
+placements. It was drafted with Claude from those sources, reviewed by me, and
+committed before any component was built or any run was made, so everything
+below was fixed in advance. It is long because it is a spec, not an article.
+For the findings, read RESULTS.md; this document is for checking how they were
+produced.
 
-Author: Ravi Teja Mandapati. First committed: 4 October 2026.
+Author: Ravi Teja Mandapati. First committed: 4 October 2026. This opening
+paragraph was rewritten on 7 October 2026 (see section 10); nothing else above
+section 10 has changed since the first commit.
 
 ---
 
@@ -172,9 +179,11 @@ These criteria are fixed before any result exists.
 
 ## 10. Changes after this commit
 
-Any change to the method after this file is first committed is added here with a
-date and a reason. The scenarios and the criteria in section 8 are never changed
-after results exist.
+This section is the audit trail for the claim that the method was fixed before
+any run: every change made after this file was first committed is listed here
+with a date and a reason, so a reader can see that none of them touched a
+scenario or a criterion in section 8. It is written for the reader who wants to
+check that, and can be skipped by everyone else.
 
 - **6 October 2026, before any run.** Clarifications made while building the
   scenarios. None changes a scenario or a criterion in section 8.
@@ -309,6 +318,13 @@ after results exist.
   permit would be refused, because a Cedar forbid overrides a permit. The
   write-up states this condition beside the S12 result.
 
+- **7 October 2026, after the official run.** Cedar's own authorization
+  documentation added to section 11 as the source for "a forbid overrides a
+  permit", which the S12 condition above relies on; the opening paragraph of
+  this section rewritten to say what the section is for; and the opening
+  paragraph of the document rewritten to say what it is and how it was
+  drafted. No change to the method, the scenarios or the results.
+
 ## 11. Sources
 
 - OWASP Top 10 for LLM Applications 2025, LLM07 System Prompt Leakage:
@@ -324,6 +340,8 @@ after results exist.
   https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/agent-gateway-overview
 - AWS, Policy in Amazon Bedrock AgentCore:
   https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.html
+- Cedar policy language, authorization semantics (forbid overrides permit):
+  https://docs.cedarpolicy.com/auth/authorization.html
 - Model Context Protocol specification (2025-11-25), authorization:
   https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
 - NIST NCCoE, Accelerating the Adoption of Software and AI Agent Identity and
