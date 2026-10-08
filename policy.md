@@ -29,11 +29,14 @@ The people in the fixtures:
 | dan | assistant | books travel for carol under that delegation |
 | erin | finance | runs vendor payments |
 
-Identity is taken as given: the runner states who the user is and which agent
-is acting. How identity is proved is out of scope here; the
-[kyc-aml-multiagent](https://github.com/RaviTejaMandapati89/kyc-aml-multiagent)
-repo covers signed workload identity. This experiment is about where the
-decision is made.
+Identity is signed, not asserted. Every call carries tokens that each tool
+server verifies: a short-lived agent token shaped like a SPIFFE workload
+identity, a user token, and, when an agent acts for someone, an on-behalf-of
+token from token exchange (RFC 8693) with the person as subject and the agent
+as actor. It is SPIFFE-shaped rather than real SPIFFE, with no workload
+attestation; DESIGN.md section 4 has the detail. This file is about what the
+rules are; the experiment is about where the decision that enforces them is
+made.
 
 ---
 

@@ -27,6 +27,8 @@ Two approaches check inside the agent, one written by hand and one generated fro
 | 5 | Gateway with central policy, called per decision | Use-case policies at the gateway; shared rules and facts from a central service, asked on every person-level decision |
 | 6 | Gateway with central policy, evaluated locally | As 5, but the gateway evaluates a published copy and acts on pushed revocation events |
 
+In identity terms: approaches 2 and 3 are enforcement points inside the agent; approach 4 is an enforcement point at the gateway with local policy; approach 5 is the same enforcement point calling a central decision point on every person-level request; approach 6 is a replicated decision point at the gateway, refreshed by publication and by pushed revocation events.
+
 ## How it was tested
 
 Same company, same tokens, same scenarios for every approach.
@@ -77,4 +79,4 @@ The checkpoints also looked up delegations from the company directory on every c
 
 ## How it was built
 
-I collated the design from the public sources listed in DESIGN.md and chose the scenarios. The code was vibe-coded with Claude Code from a spec, one task at a time: failing tests first, then the build, with every commit run and checked by me. This write-up was drafted with Claude and edited by me. The design decisions and the reasons for them are in DESIGN.md.
+I collated the design from the public sources listed in the README and chose the scenarios. The code was built with Claude Code from a spec, one task at a time: failing tests first, then the build, with every commit run and checked by me. This write-up was drafted with Claude and edited by me. The design decisions and the reasons for them are in DESIGN.md.
